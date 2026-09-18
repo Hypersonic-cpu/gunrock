@@ -9,7 +9,9 @@ set(FETCHCONTENT_BASE_DIR ${FC_BASE})
 FetchContent_Declare(
     nvbench
     GIT_REPOSITORY https://github.com/NVIDIA/nvbench.git
-    GIT_TAG        main
+    # Keep the benchmark driver API and CMake requirements stable.  NVBench
+    # main is a moving target and newer revisions currently require CMake 4.
+    GIT_TAG        182c77e4f42d86096505fbb0d3795eb7f013439c
 )
 
 FetchContent_GetProperties(nvbench)

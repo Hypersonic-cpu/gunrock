@@ -4,6 +4,14 @@
 #include <iostream>
 #include <iterator>
 
+struct filtered_argv_t {
+  std::vector<std::string> storage;
+  std::vector<char*> pointers;
+
+  std::size_t size() const { return pointers.size(); }
+  char** data() { return pointers.data(); }
+};
+
 /**
  * @brief Filter the arguments by removing the strings.
  *
@@ -15,19 +23,21 @@
  */
 template <typename... t>
 auto filtered_argv(int argc, char** argv, t&... s) {
-  std::vector<std::string> args(argv, argv + argc);
+  filtered_argv_t result;
+  result.storage.assign(argv, argv + argc);
   auto condition = [s...](const std::string& arg) -> bool {
     return ((arg == s) || ...);
   };
-  args.erase(std::remove_if(args.begin(), args.end(), condition), args.end());
+  result.storage.erase(
+      std::remove_if(result.storage.begin(), result.storage.end(), condition),
+      result.storage.end());
 
-  std::vector<char*> cstrings;
-  cstrings.reserve(args.size());
+  result.pointers.reserve(result.storage.size());
 
-  for (auto& s : args)
-    cstrings.push_back(&s[0]);
+  for (auto& arg : result.storage)
+    result.pointers.push_back(arg.data());
 
-  return cstrings;
+  return result;
 }
 
 void print_arg(int argc, char** argv) {

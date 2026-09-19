@@ -277,26 +277,28 @@ void execute_with_scratch(graph_t& G,
         "block-mapped advance scratch must contain an output counter");
   }
 
-  if constexpr (output_type != advance_io_type_t::none) {
-    // B0 keeps the original degree/output-size pre-pass.
-    auto size_of_output = compute_output_length(G, input, context);
-
-    // If output frontier is empty, resize and return.
-    if (size_of_output <= 0) {
-      output.set_number_of_elements(0);
-      return;
-    }
-
-    /// @todo Resize the output (inactive) buffer to the new size.
-    /// Can be hidden within the frontier struct.
-    if (output.get_capacity() < size_of_output)
-      output.reserve(size_of_output);
-    output.set_number_of_elements(size_of_output);
-  }
-
   std::size_t num_elements = (input_type == advance_io_type_t::graph)
                                  ? G.get_number_of_vertices()
                                  : input.get_number_of_elements();
+
+  if constexpr (output_type != advance_io_type_t::none) {
+    // The kernel writes the raw adjacency expansion directly into the output
+    // frontier. The enactor normally reserves at least the graph edge count;
+    // retain the stock path if that invariant is not available.
+    if (output.get_capacity() <
+        static_cast<std::size_t>(G.get_number_of_edges())) {
+      execute<direction, input_type, output_type>(
+          G, op, input, output, context);
+      return;
+    }
+
+    // Avoid launching a zero-work kernel and preserve the stock empty output
+    // behavior without a degree/output-size pre-pass.
+    if (num_elements == 0) {
+      output.set_number_of_elements(0);
+      return;
+    }
+  }
 
   // Set-up and launch block-mapped advance.
   using namespace gcuda::launch_box;
@@ -324,7 +326,20 @@ void execute_with_scratch(graph_t& G,
 
   launch_box.launch(context, kernel, G, op, input.data(), output.data(),
                     num_elements, d_block_offsets);
-  context.synchronize();
+
+  if constexpr (output_type != advance_io_type_t::none) {
+    offset_counter_t h_output_count = 0;
+    error::throw_if_exception(hipMemcpyAsync(&h_output_count,
+                                             d_block_offsets,
+                                             sizeof(offset_counter_t),
+                                             hipMemcpyDeviceToHost,
+                                             context.stream()));
+    context.synchronize();
+    output.set_number_of_elements(
+        static_cast<std::size_t>(h_output_count));
+  } else {
+    context.synchronize();
+  }
 }
 
 }  // namespace block_mapped

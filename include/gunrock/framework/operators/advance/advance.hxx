@@ -205,6 +205,11 @@ void execute(graph_t& G,
              operator_type op,
              gcuda::multi_context_t& context,
              bool swap_buffers = true) {
+  if (context.size() != 1) {
+    error::throw_if_exception(hipErrorUnknown,
+                              "`context.size() != 1` not supported");
+  }
+
   if constexpr (lb == load_balance_t::block_mapped) {
     auto context0 = context.get_context(0);
     block_mapped::execute_with_scratch<direction, input_type, output_type>(

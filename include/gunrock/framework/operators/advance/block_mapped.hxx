@@ -13,6 +13,7 @@
 
 #include <gunrock/util/math.hxx>
 #include <gunrock/cuda/cuda.hxx>
+#include <gunrock/error.hxx>
 
 #include <gunrock/framework/operators/configs.hxx>
 #include <gunrock/framework/benchmark.hxx>
@@ -245,6 +246,84 @@ void execute(graph_t& G,
   launch_box.calculate_grid_dimensions_strided(num_elements);
   launch_box.launch(context, kernel, G, op, input.data(), output.data(),
                     num_elements, block_offsets.data().get());
+  context.synchronize();
+}
+
+/**
+ * @brief Enactor path for block-mapped advance using persistent scratch.
+ *
+ * The regular execute() entry point retains its historical temporary counter
+ * allocation for direct API users. Enactors already own persistent device
+ * scratch, so use its first element as the block output counter here.
+ */
+template <advance_direction_t direction,
+          advance_io_type_t input_type,
+          advance_io_type_t output_type,
+          typename graph_t,
+          typename operator_t,
+          typename frontier_t,
+          typename work_tiles_t>
+void execute_with_scratch(graph_t& G,
+                          operator_t op,
+                          frontier_t& input,
+                          frontier_t& output,
+                          work_tiles_t& scratch,
+                          gcuda::standard_context_t& context) {
+  using offset_counter_t = typename work_tiles_t::value_type;
+
+  if (scratch.size() < 1) {
+    error::throw_if_exception(
+        hipErrorInvalidValue,
+        "block-mapped advance scratch must contain an output counter");
+  }
+
+  if constexpr (output_type != advance_io_type_t::none) {
+    // B0 keeps the original degree/output-size pre-pass.
+    auto size_of_output = compute_output_length(G, input, context);
+
+    // If output frontier is empty, resize and return.
+    if (size_of_output <= 0) {
+      output.set_number_of_elements(0);
+      return;
+    }
+
+    /// @todo Resize the output (inactive) buffer to the new size.
+    /// Can be hidden within the frontier struct.
+    if (output.get_capacity() < size_of_output)
+      output.reserve(size_of_output);
+    output.set_number_of_elements(size_of_output);
+  }
+
+  std::size_t num_elements = (input_type == advance_io_type_t::graph)
+                                 ? G.get_number_of_vertices()
+                                 : input.get_number_of_elements();
+
+  // Set-up and launch block-mapped advance.
+  using namespace gcuda::launch_box;
+  using launch_t =
+      launch_box_t<launch_params_dynamic_grid_t<fallback, dim3_t<256>>>;
+
+  launch_t launch_box;
+
+  launch_box.calculate_grid_dimensions_strided(num_elements);
+  auto kernel = block_mapped_kernel<  // kernel
+      launch_box.block_dimensions.x,  // threas per block
+      1,                              // items per thread
+      input_type, output_type,        // i/o parameters
+      graph_t,                        // graph type
+      typename frontier_t::type_t,    // frontier value type
+      offset_counter_t,               // counter value type
+      operator_t                      // lambda type
+      >;
+
+  auto* d_block_offsets = scratch.data().get();
+  error::throw_if_exception(hipMemsetAsync(d_block_offsets,
+                                           0,
+                                           sizeof(offset_counter_t),
+                                           context.stream()));
+
+  launch_box.launch(context, kernel, G, op, input.data(), output.data(),
+                    num_elements, d_block_offsets);
   context.synchronize();
 }
 

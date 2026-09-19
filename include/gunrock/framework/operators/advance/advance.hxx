@@ -205,14 +205,21 @@ void execute(graph_t& G,
              operator_type op,
              gcuda::multi_context_t& context,
              bool swap_buffers = true) {
-  execute<lb, direction, input_type, output_type>(
-      G,                         // graph
-      op,                        // advance operator
-      E->get_input_frontier(),   // input frontier
-      E->get_output_frontier(),  // output frontier
-      E->scanned_work_domain,    // work segments
-      context                    // gpu context
-  );
+  if constexpr (lb == load_balance_t::block_mapped) {
+    auto context0 = context.get_context(0);
+    block_mapped::execute_with_scratch<direction, input_type, output_type>(
+        G, op, *E->get_input_frontier(), *E->get_output_frontier(),
+        E->scanned_work_domain, *context0);
+  } else {
+    execute<lb, direction, input_type, output_type>(
+        G,                         // graph
+        op,                        // advance operator
+        E->get_input_frontier(),   // input frontier
+        E->get_output_frontier(),  // output frontier
+        E->scanned_work_domain,    // work segments
+        context                    // gpu context
+    );
+  }
 
   /*!
    * @note if the Enactor interface is used, we, the library writers assume

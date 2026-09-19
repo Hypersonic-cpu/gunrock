@@ -1,0 +1,46 @@
+CompileFlags:
+  CompilationDatabase: build
+  Remove:
+    - -forward-unknown-to-host-compiler
+    - --options-file
+    - CMakeFiles/*/includes_CUDA.rsp
+    - --generate-code=*
+    - --expt-extended-lambda
+    - --expt-relaxed-constexpr
+    - --use_fast_math
+    - --diag-suppress=*
+  Add:
+    - -x
+    - cuda
+    - --cuda-gpu-arch=sm_86
+    - --cuda-path=/usr/local/cuda
+    - -DESSENTIALS_COLLECT_METRICS=0
+    - -DSM_TARGET=86
+    - -D__HIP_PLATFORM_NVIDIA__
+    - -DHIP_BACKEND=1
+    - -I../../include
+    - -I../../include/gunrock/compat
+    - -I../../externals/cxxopts-src/include
+    - -I../../externals/json-src/include
+    - -I../../externals/cmake_modules-src
+    - -I../../externals/cccl-src
+    - -I../../externals/nvbench-src
+    - -I../../externals/nvbench-build
+    - -isystem
+    - /usr/local/cuda/extras/CUPTI/include
+
+---
+If:
+  PathMatch: .*\.hxx
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -I/home/kongyijiang/Benchmarks/gunrock/include
+    - -I/home/kongyijiang/Benchmarks/gunrock/include/gunrock/compat
+    - -I/home/kongyijiang/Benchmarks/gunrock/externals/cxxopts-src/include
+    - -I/home/kongyijiang/Benchmarks/gunrock/externals/json-src/include
+    - -I/home/kongyijiang/Benchmarks/gunrock/externals/cmake_modules-src
+    - -I/home/kongyijiang/Benchmarks/gunrock/externals/cccl-src
+    - -I/home/kongyijiang/Benchmarks/gunrock/externals/nvbench-src
+    - -I/home/kongyijiang/Benchmarks/gunrock/externals/nvbench-build
+    - -DHIP_BACKEND=1

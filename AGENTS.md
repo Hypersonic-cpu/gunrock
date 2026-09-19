@@ -29,6 +29,8 @@ cmake --build build --target tc_bench -j"$(nproc)"
 
 Replace `86` with your GPU architecture. Replace `tc_bench` to build another target, such as `bfs_bench`; executables are written to `build/bin/`. Run Triangle Counting on one GPU with `./build/bin/tc_bench --devices 0 --market datasets/roadNet-CA/roadNet-CA.mtx --reduce true`. Download standard matrices with `make -C datasets STANDARD`. Run native tests with `ctest --test-dir build --output-on-failure`. Run Python tests from `python/` with `pytest tests/ -v` inside `.venv`.
 
+Generate full benchmark set by `for BENCHNAME in {bc,bfs,color,geo,hits,kcore,mst,ppr,pr,spgemm,spmv,sssp,tc}_bench; do cmake --build build --target $BENCHNAME -j$(nproc); done`.
+
 ## Coding Style & Naming Conventions
 
 Use C++17, two-space indentation, snake_case identifiers, and existing suffixes such as `.cu`, `.cuh`, and `.hxx`. Use `scripts/format.sh . y`; preserve include ordering because automatic sorting is disabled.

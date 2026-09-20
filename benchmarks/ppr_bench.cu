@@ -4,6 +4,7 @@
 #include <gunrock/algorithms/ppr.hxx>
 
 #include "benchmarks.hxx"
+#include "profiling_range.hxx"
 
 using namespace gunrock;
 using namespace memory;
@@ -94,7 +95,9 @@ void ppr_bench(nvbench::state& state) {
   // --
   // Run Personalized PR with NVBench
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    gunrock::profiling::nvtx_range_t algorithm_range{"algorithm"};
     gunrock::ppr::run_batch(G, n_seeds, p.data().get(), alpha, epsilon);
+    algorithm_range.end();
   });
 }
 

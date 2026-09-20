@@ -29,6 +29,12 @@ foreach(SOURCE IN LISTS BENCHMARK_SOURCES)
       PRIVATE nvbench::nvbench
     )
   endif()
+  if(ESSENTIALS_NVIDIA_BACKEND AND
+     BENCHMARK_NAME MATCHES "^(bfs|sssp|ppr|kcore)_bench$")
+    target_link_libraries(${BENCHMARK_NAME}
+      PRIVATE ${CUDA_nvToolsExt_LIBRARY}
+    )
+  endif()
   get_target_property(ESSENTIALS_ARCHITECTURES
     essentials CUDA_ARCHITECTURES
   )

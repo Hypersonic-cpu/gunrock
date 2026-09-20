@@ -4,6 +4,7 @@
 #include <gunrock/algorithms/kcore.hxx>
 
 #include "benchmarks.hxx"
+#include "profiling_range.hxx"
 
 using namespace gunrock;
 using namespace memory;
@@ -88,7 +89,9 @@ void kcore_bench(nvbench::state& state) {
   // --
   // Run K-Core Decomposition with NVBench
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    gunrock::profiling::nvtx_range_t algorithm_range{"algorithm"};
     gunrock::kcore::run(G, k_cores.data().get());
+    algorithm_range.end();
   });
 }
 

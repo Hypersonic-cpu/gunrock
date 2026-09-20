@@ -4,6 +4,7 @@
 #include <gunrock/algorithms/bfs.hxx>
 
 #include "benchmarks.hxx"
+#include "profiling_range.hxx"
 
 using namespace gunrock;
 using namespace memory;
@@ -90,8 +91,10 @@ void bfs_bench(nvbench::state& state) {
   // --
   // Run BFS with NVBench
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    gunrock::profiling::nvtx_range_t algorithm_range{"algorithm"};
     gunrock::bfs::run(G, single_source, distances.data().get(),
                       predecessors.data().get());
+    algorithm_range.end();
   });
 }
 

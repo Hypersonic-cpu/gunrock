@@ -21,6 +21,8 @@
 #include <thrust/transform_scan.h>
 #include <thrust/iterator/discard_iterator.h>
 
+#include <type_traits>
+
 // Include appropriate CUB library based on compiler
 #if defined(__CUDACC__) && !defined(__HIP__)
   // Pure CUDA (NVCC without HIP): Use CUB
@@ -249,12 +251,39 @@ void execute(graph_t& G,
   context.synchronize();
 }
 
+template <advance_direction_t direction,
+          advance_io_type_t input_type,
+          advance_io_type_t output_type,
+          typename graph_t,
+          typename operator_t,
+          typename frontier_t>
+void launch_kernel(graph_t& G,
+                   operator_t op,
+                   frontier_t& input,
+                   frontier_t& output,
+                   std::size_t num_elements,
+                   typename frontier_t::offset_t* block_offsets,
+                   gcuda::standard_context_t& context) {
+  using namespace gcuda::launch_box;
+  using launch_t =
+      launch_box_t<launch_params_dynamic_grid_t<fallback, dim3_t<256>>>;
+
+  launch_t launch_box;
+  launch_box.calculate_grid_dimensions_strided(num_elements);
+  auto kernel = block_mapped_kernel<
+      launch_box.block_dimensions.x, 1, input_type, output_type, graph_t,
+      typename frontier_t::type_t, typename frontier_t::offset_t, operator_t>;
+
+  launch_box.launch(context, kernel, G, op, input.data(), output.data(),
+                    num_elements, block_offsets);
+}
+
 /**
- * @brief Enactor path for block-mapped advance using persistent scratch.
+ * @brief Safe enactor path that preserves stock output sizing and reuses scratch.
  *
- * The regular execute() entry point retains its historical temporary counter
- * allocation for direct API users. Enactors already own persistent device
- * scratch, so use its first element as the block output counter here.
+ * The generic path keeps compute_output_length() and the resulting frontier
+ * sizing semantics, but uses persistent enactor scratch instead of allocating
+ * a temporary block counter for each advance.
  */
 template <advance_direction_t direction,
           advance_io_type_t input_type,
@@ -269,7 +298,101 @@ void execute_with_scratch(graph_t& G,
                           frontier_t& output,
                           work_tiles_t& scratch,
                           gcuda::standard_context_t& context) {
-  using offset_counter_t = typename work_tiles_t::value_type;
+  if constexpr (output_type != advance_io_type_t::none) {
+    auto size_of_output = compute_output_length(
+        G, input, context, input_type == advance_io_type_t::graph);
+
+    if (size_of_output == 0) {
+      output.set_number_of_elements(0);
+      return;
+    }
+
+    if (output.get_capacity() < size_of_output)
+      output.reserve(size_of_output);
+    output.set_number_of_elements(size_of_output);
+  }
+
+  using offset_counter_t = typename frontier_t::offset_t;
+  if constexpr (output_type != advance_io_type_t::none) {
+    static_assert(
+        std::is_same_v<std::remove_cv_t<typename work_tiles_t::value_type>,
+                       std::remove_cv_t<offset_counter_t>>,
+        "Persistent block-mapped counter type must match frontier offset type");
+  }
+
+  auto num_elements = input_type == advance_io_type_t::graph
+                          ? G.get_number_of_vertices()
+                          : input.get_number_of_elements();
+  if (num_elements == 0)
+    return;
+
+  offset_counter_t* d_block_offsets = nullptr;
+  if constexpr (output_type != advance_io_type_t::none) {
+    if (scratch.size() < 1) {
+      error::throw_if_exception(
+          hipErrorInvalidValue,
+          "block-mapped advance scratch must contain an output counter");
+    }
+
+    d_block_offsets = scratch.data().get();
+    error::throw_if_exception(hipMemsetAsync(d_block_offsets,
+                                             0,
+                                             sizeof(offset_counter_t),
+                                             context.stream()));
+  }
+
+  launch_kernel<direction, input_type, output_type>(
+      G, op, input, output, num_elements, d_block_offsets, context);
+  context.synchronize();
+}
+
+/**
+ * @brief Final-B path for advances whose output fits a graph-edge-sized buffer.
+ *
+ * The semantic bound is checked by the enactor dispatch. This helper still
+ * verifies the actual frontier capacity and falls back to the safe B0 path.
+ */
+template <advance_output_bound_t output_bound,
+          advance_direction_t direction,
+          advance_io_type_t input_type,
+          advance_io_type_t output_type,
+          typename graph_t,
+          typename operator_t,
+          typename frontier_t,
+          typename work_tiles_t>
+void execute_preallocated(graph_t& G,
+                          operator_t op,
+                          frontier_t& input,
+                          frontier_t& output,
+                          work_tiles_t& scratch,
+                          gcuda::standard_context_t& context) {
+  static_assert(output_type != advance_io_type_t::none,
+                "Preallocated advance requires an output frontier");
+  static_assert(input_type == advance_io_type_t::graph ||
+                    output_bound == advance_output_bound_t::graph_edges,
+                "Preallocated advance requires a proven graph-edge output bound");
+
+  using offset_counter_t = typename frontier_t::offset_t;
+  static_assert(
+      std::is_same_v<std::remove_cv_t<typename work_tiles_t::value_type>,
+                     std::remove_cv_t<offset_counter_t>>,
+      "Persistent block-mapped counter type must match frontier offset type");
+
+  auto num_elements = input_type == advance_io_type_t::graph
+                          ? G.get_number_of_vertices()
+                          : input.get_number_of_elements();
+
+  if (output.get_capacity() <
+      static_cast<std::size_t>(G.get_number_of_edges())) {
+    execute_with_scratch<direction, input_type, output_type>(
+        G, op, input, output, scratch, context);
+    return;
+  }
+
+  if (num_elements == 0) {
+    output.set_number_of_elements(0);
+    return;
+  }
 
   if (scratch.size() < 1) {
     error::throw_if_exception(
@@ -277,69 +400,53 @@ void execute_with_scratch(graph_t& G,
         "block-mapped advance scratch must contain an output counter");
   }
 
-  std::size_t num_elements = (input_type == advance_io_type_t::graph)
-                                 ? G.get_number_of_vertices()
-                                 : input.get_number_of_elements();
-
-  if constexpr (output_type != advance_io_type_t::none) {
-    // The kernel writes the raw adjacency expansion directly into the output
-    // frontier. The enactor normally reserves at least the graph edge count;
-    // retain the stock path if that invariant is not available.
-    if (output.get_capacity() <
-        static_cast<std::size_t>(G.get_number_of_edges())) {
-      execute<direction, input_type, output_type>(
-          G, op, input, output, context);
-      return;
-    }
-
-    // Avoid launching a zero-work kernel and preserve the stock empty output
-    // behavior without a degree/output-size pre-pass.
-    if (num_elements == 0) {
-      output.set_number_of_elements(0);
-      return;
-    }
-  }
-
-  // Set-up and launch block-mapped advance.
-  using namespace gcuda::launch_box;
-  using launch_t =
-      launch_box_t<launch_params_dynamic_grid_t<fallback, dim3_t<256>>>;
-
-  launch_t launch_box;
-
-  launch_box.calculate_grid_dimensions_strided(num_elements);
-  auto kernel = block_mapped_kernel<  // kernel
-      launch_box.block_dimensions.x,  // threas per block
-      1,                              // items per thread
-      input_type, output_type,        // i/o parameters
-      graph_t,                        // graph type
-      typename frontier_t::type_t,    // frontier value type
-      offset_counter_t,               // counter value type
-      operator_t                      // lambda type
-      >;
-
+  // block_mapped does not consume the global scanned work domain; reuse its
+  // first element as a persistent output counter for this synchronous advance.
   auto* d_block_offsets = scratch.data().get();
   error::throw_if_exception(hipMemsetAsync(d_block_offsets,
                                            0,
                                            sizeof(offset_counter_t),
                                            context.stream()));
 
-  launch_box.launch(context, kernel, G, op, input.data(), output.data(),
-                    num_elements, d_block_offsets);
+  launch_kernel<direction, input_type, output_type>(
+      G, op, input, output, num_elements, d_block_offsets, context);
 
-  if constexpr (output_type != advance_io_type_t::none) {
-    offset_counter_t h_output_count = 0;
-    error::throw_if_exception(hipMemcpyAsync(&h_output_count,
-                                             d_block_offsets,
-                                             sizeof(offset_counter_t),
-                                             hipMemcpyDeviceToHost,
-                                             context.stream()));
-    context.synchronize();
-    output.set_number_of_elements(
-        static_cast<std::size_t>(h_output_count));
-  } else {
-    context.synchronize();
-  }
+  offset_counter_t h_output_count = 0;
+  error::throw_if_exception(hipMemcpyAsync(&h_output_count,
+                                           d_block_offsets,
+                                           sizeof(offset_counter_t),
+                                           hipMemcpyDeviceToHost,
+                                           context.stream()));
+  context.synchronize();
+  output.set_number_of_elements(static_cast<std::size_t>(h_output_count));
+}
+
+/**
+ * @brief Block-mapped path for advances with no output frontier.
+ *
+ * The kernel's output-type branch never reads the counter in this mode, so
+ * there is no output sizing, scratch reset, or counter copy to perform.
+ */
+template <advance_direction_t direction,
+          advance_io_type_t input_type,
+          typename graph_t,
+          typename operator_t,
+          typename frontier_t>
+void execute_no_output(graph_t& G,
+                       operator_t op,
+                       frontier_t& input,
+                       gcuda::standard_context_t& context) {
+  auto num_elements = input_type == advance_io_type_t::graph
+                          ? G.get_number_of_vertices()
+                          : input.get_number_of_elements();
+  if (num_elements == 0)
+    return;
+
+  auto* no_output_counter =
+      static_cast<typename frontier_t::offset_t*>(nullptr);
+  launch_kernel<direction, input_type, advance_io_type_t::none>(
+      G, op, input, input, num_elements, no_output_counter, context);
+  context.synchronize();
 }
 
 }  // namespace block_mapped

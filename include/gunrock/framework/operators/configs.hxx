@@ -70,6 +70,18 @@ enum advance_io_type_t {
   none       ///< No output frontier
 };
 
+namespace advance {
+
+/**
+ * @brief Proven upper bound for a block-mapped advance's raw output expansion.
+ */
+enum class advance_output_bound_t {
+  unknown,
+  graph_edges
+};
+
+}  // namespace advance
+
 /**
  * @brief Direction of the advance operator. Forward is push-based, backwards is
  * pull-based, optimized is both forwards and backwards controlled by a

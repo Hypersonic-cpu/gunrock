@@ -13,6 +13,7 @@
 #include <gunrock/cuda/cuda.hxx>
 
 #include <gunrock/framework/frontier/frontier.hxx>
+#include <gunrock/framework/operators/configs.hxx>
 #include <gunrock/framework/problem.hxx>
 #include <gunrock/framework/benchmark.hxx>
 
@@ -83,6 +84,10 @@ template <typename algorithm_problem_t,
 struct enactor_t {
   using vertex_t = typename algorithm_problem_t::vertex_t;
   using edge_t = typename algorithm_problem_t::edge_t;
+
+  static constexpr operators::advance::advance_output_bound_t
+      advance_output_bound =
+          operators::advance::advance_output_bound_t::unknown;
 
   using frontier_t = frontier::frontier_t<vertex_t, edge_t, frontier_kind>;
 

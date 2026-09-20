@@ -71,6 +71,10 @@ struct problem_t : gunrock::problem_t<graph_t> {
 
 template <typename problem_t>
 struct enactor_t : gunrock::enactor_t<problem_t> {
+  static constexpr operators::advance::advance_output_bound_t
+      advance_output_bound =
+          operators::advance::advance_output_bound_t::graph_edges;
+
   enactor_t(problem_t* _problem,
             std::shared_ptr<gcuda::multi_context_t> _context)
       : gunrock::enactor_t<problem_t>(_problem, _context) {}
@@ -92,7 +96,9 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
 
   void loop(gcuda::multi_context_t& context) override {
     // Data slice
-    auto E = this->get_enactor();
+    // Preserve the concrete enactor type so generic operators can observe its
+    // compile-time capabilities.
+    auto E = this;
     auto P = this->get_problem();
     auto G = P->get_graph();
 

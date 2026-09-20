@@ -212,9 +212,32 @@ void execute(graph_t& G,
 
   if constexpr (lb == load_balance_t::block_mapped) {
     auto context0 = context.get_context(0);
-    block_mapped::execute_with_scratch<direction, input_type, output_type>(
-        G, op, *E->get_input_frontier(), *E->get_output_frontier(),
-        E->scanned_work_domain, *context0);
+
+    constexpr bool output_not_required =
+        output_type == advance_io_type_t::none;
+    constexpr bool graph_input_bound = input_type == advance_io_type_t::graph;
+    constexpr bool declared_graph_edge_bound =
+        enactor_type::advance_output_bound ==
+        advance_output_bound_t::graph_edges;
+    constexpr bool can_skip_sizing = output_not_required || graph_input_bound ||
+                                     declared_graph_edge_bound;
+
+    if constexpr (can_skip_sizing) {
+      if constexpr (output_not_required) {
+        block_mapped::execute_no_output<direction, input_type>(
+            G, op, *E->get_input_frontier(), *context0);
+      } else {
+        block_mapped::execute_preallocated<
+            enactor_type::advance_output_bound, direction, input_type,
+            output_type>(G, op, *E->get_input_frontier(),
+                         *E->get_output_frontier(), E->scanned_work_domain,
+                         *context0);
+      }
+    } else {
+      block_mapped::execute_with_scratch<direction, input_type, output_type>(
+          G, op, *E->get_input_frontier(), *E->get_output_frontier(),
+          E->scanned_work_domain, *context0);
+    }
   } else {
     execute<lb, direction, input_type, output_type>(
         G,                         // graph

@@ -30,7 +30,7 @@ foreach(SOURCE IN LISTS BENCHMARK_SOURCES)
     )
   endif()
   if(ESSENTIALS_NVIDIA_BACKEND AND
-     BENCHMARK_NAME MATCHES "^(bfs|sssp|ppr|kcore)_bench$")
+     BENCHMARK_NAME MATCHES "^(bc|bfs|kcore|pr|ppr|sssp|tc)_bench$")
     target_link_libraries(${BENCHMARK_NAME}
       PRIVATE ${CUDA_nvToolsExt_LIBRARY}
     )

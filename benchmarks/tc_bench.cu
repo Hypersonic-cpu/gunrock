@@ -4,6 +4,7 @@
 #include <gunrock/algorithms/tc.hxx>
 
 #include "benchmarks.hxx"
+#include "profiling_range.hxx"
 
 using namespace gunrock;
 using namespace memory;
@@ -15,6 +16,7 @@ using count_t = vertex_t;
 
 std::string filename_;
 bool reduce_all_triangles_;
+int profile_repetitions_ = 1;
 struct parameters_t {
   std::string filename;
   bool reduce_all_triangles;
@@ -36,6 +38,9 @@ struct parameters_t {
         "Compute a single triangle count for the entire graph (default = "
         "false)",
         cxxopts::value<bool>()->default_value("false"));
+    options.add_options()("profile-runs",
+                          "Repeated algorithm calls inside one profiling run",
+                          cxxopts::value<int>()->default_value("1"));
 
     // Parse command line arguments
     auto result = options.parse(argc, argv);
@@ -54,6 +59,11 @@ struct parameters_t {
           std::exit(0);
         }
         reduce_all_triangles = result["reduce"].as<bool>();
+        profile_repetitions_ = result["profile-runs"].as<int>();
+        if (profile_repetitions_ < 1) {
+          std::cerr << "--profile-runs must be positive" << std::endl;
+          std::exit(1);
+        }
       } else {
         std::cout << options.help({""});
         std::cout << "  [optional nvbench args]" << std::endl << std::endl;
@@ -97,8 +107,12 @@ void tc_bench(nvbench::state& state) {
   // --
   // Run TC with NVBench
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    tc::run(G, reduce_all_triangles_, triangles_count.data().get(),
-            &total_triangles);
+    for (int i = 0; i < profile_repetitions_; ++i) {
+      gunrock::profiling::nvtx_range_t algorithm_range{"algorithm"};
+      tc::run(G, reduce_all_triangles_, triangles_count.data().get(),
+              &total_triangles);
+      algorithm_range.end();
+    }
   });
 }
 
@@ -113,8 +127,10 @@ int main(int argc, char** argv) {
     NVBENCH_MAIN_BODY(1, args);
   } else {
     // Remove all gunrock parameters and pass to nvbench.
+    auto profile_repetitions_arg = std::to_string(profile_repetitions_);
     auto args = filtered_argv(argc, argv, "--market", "-m", "--reduce", "-r",
-                              filename_, "true", "false");
+                              "--profile-runs", filename_, "true", "false",
+                              profile_repetitions_arg);
     NVBENCH_BENCH(tc_bench);
     NVBENCH_MAIN_BODY(args.size(), args.data());
   }

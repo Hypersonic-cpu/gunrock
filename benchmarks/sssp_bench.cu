@@ -14,6 +14,7 @@ using edge_t = int;
 using weight_t = float;
 
 std::string filename;
+int profile_repetitions = 1;
 
 struct parameters_t {
   std::string filename;
@@ -31,7 +32,9 @@ struct parameters_t {
     // Add command line options
     options.add_options()("h,help", "Print help")  // help
         ("m,market", "Matrix file",
-         cxxopts::value<std::string>());  // mtx
+         cxxopts::value<std::string>())  // mtx
+        ("profile-runs", "Repeated algorithm calls inside one profiling run",
+         cxxopts::value<int>()->default_value("1"));
 
     // Parse command line arguments
     auto result = options.parse(argc, argv);
@@ -44,6 +47,11 @@ struct parameters_t {
     } else {
       if (result.count("market") == 1) {
         filename = result["market"].as<std::string>();
+        profile_repetitions = result["profile-runs"].as<int>();
+        if (profile_repetitions < 1) {
+          std::cerr << "--profile-runs must be positive" << std::endl;
+          std::exit(1);
+        }
         if (!util::is_market(filename)) {
           std::cout << options.help({""});
           std::cout << "  [optional nvbench args]" << std::endl << std::endl;
@@ -93,10 +101,12 @@ void sssp_bench(nvbench::state& state) {
   // --
   // Run SSSP with NVBench
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    gunrock::profiling::nvtx_range_t algorithm_range{"algorithm"};
-    gunrock::sssp::run(G, single_source, distances.data().get(),
-                       predecessors.data().get());
-    algorithm_range.end();
+    for (int i = 0; i < profile_repetitions; ++i) {
+      gunrock::profiling::nvtx_range_t algorithm_range{"algorithm"};
+      gunrock::sssp::run(G, single_source, distances.data().get(),
+                         predecessors.data().get());
+      algorithm_range.end();
+    }
   });
 }
 
@@ -109,7 +119,9 @@ int main(int argc, char** argv) {
     const char* args[1] = {"-h"};
     NVBENCH_MAIN_BODY(1, args);
   } else {  // Remove all gunrock parameters and pass to nvbench.
-    auto args = filtered_argv(argc, argv, "--market", "-m", filename);
+    auto profile_repetitions_arg = std::to_string(profile_repetitions);
+    auto args = filtered_argv(argc, argv, "--market", "-m", "--profile-runs",
+                              filename, profile_repetitions_arg);
     NVBENCH_BENCH(sssp_bench);
     NVBENCH_MAIN_BODY(args.size(), args.data());
   }

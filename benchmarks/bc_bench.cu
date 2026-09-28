@@ -1,9 +1,11 @@
 #include <nvbench/nvbench.cuh>
 #include <cxxopts.hpp>
+#include <stdexcept>
 #include <gunrock/algorithms/algorithms.hxx>
 #include <gunrock/algorithms/bc.hxx>
 
 #include "benchmarks.hxx"
+#include "profiling_range.hxx"
 
 using namespace gunrock;
 using namespace memory;
@@ -13,9 +15,12 @@ using edge_t = int;
 using weight_t = float;
 
 std::string filename;
+int profile_source = 0;
+int profile_repetitions = 1;
 
 struct parameters_t {
   std::string filename;
+  int source = 0;
   bool help = false;
   cxxopts::Options options;
 
@@ -30,7 +35,11 @@ struct parameters_t {
     // Add command line options
     options.add_options()("h,help", "Print help")  // help
         ("m,market", "Matrix file",
-         cxxopts::value<std::string>());  // mtx
+         cxxopts::value<std::string>())  // mtx
+        ("s,src", "Source vertex",
+         cxxopts::value<int>()->default_value("0"))
+        ("profile-runs", "Repeated algorithm calls inside one profiling run",
+         cxxopts::value<int>()->default_value("1"));
 
     // Parse command line arguments
     auto result = options.parse(argc, argv);
@@ -52,6 +61,12 @@ struct parameters_t {
         std::cout << options.help({""});
         std::cout << "  [optional nvbench args]" << std::endl << std::endl;
         std::exit(0);
+      }
+      source = result["src"].as<int>();
+      profile_repetitions = result["profile-runs"].as<int>();
+      if (profile_repetitions < 1) {
+        std::cerr << "--profile-runs must be positive" << std::endl;
+        std::exit(1);
       }
     }
   }
@@ -83,17 +98,28 @@ void bc_bench(nvbench::state& state) {
   // Params and memory allocation
   vertex_t n_vertices = G.get_number_of_vertices();
   thrust::device_vector<weight_t> bc_values(n_vertices);
+  if (profile_source < 0 || profile_source >= n_vertices) {
+    throw std::invalid_argument("--src is outside the graph vertex range");
+  }
+  auto context = std::make_shared<gcuda::multi_context_t>(0);
+  gunrock::bc::param_t<vertex_t> param(profile_source);
+  gunrock::bc::result_t<weight_t> result(bc_values.data().get());
 
   // --
   // Run BC with NVBench
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    gunrock::bc::run(G, bc_values.data().get());
+    for (int i = 0; i < profile_repetitions; ++i) {
+      gunrock::profiling::nvtx_range_t algorithm_range{"algorithm"};
+      gunrock::bc::run(G, param, result, context);
+      algorithm_range.end();
+    }
   });
 }
 
 int main(int argc, char** argv) {
   parameters_t arguments(argc, argv);
   filename = arguments.filename;
+  profile_source = arguments.source;
 
   if (arguments.help) {
     // Print NVBench help.
@@ -101,7 +127,12 @@ int main(int argc, char** argv) {
     NVBENCH_MAIN_BODY(1, args);
   } else {
     // Remove all gunrock parameters and pass to nvbench.
-    auto args = filtered_argv(argc, argv, "--market", "-m", filename);
+    auto source_arg = std::to_string(profile_source);
+    auto source_option = std::string("--src=") + source_arg;
+    auto profile_repetitions_arg = std::to_string(profile_repetitions);
+    auto args = filtered_argv(argc, argv, "--market", "-m", "--src", "-s",
+                              source_option, "--profile-runs", filename,
+                              profile_repetitions_arg);
     NVBENCH_BENCH(bc_bench);
     NVBENCH_MAIN_BODY(args.size(), args.data());
   }

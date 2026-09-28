@@ -1,5 +1,13 @@
 # Repository Guidelines
 
+## Local Agent Instructions
+
+Before working in this repository, read `AGENTS.local.md` if it exists. It
+contains machine-specific paths, hardware, and environment instructions that
+are intentionally excluded from version control. Apply those local
+instructions together with this file; if the file is absent, continue using
+this document alone.
+
 ## Project Structure & Module Organization
 
 - `include/gunrock/` contains the header-only graph library, formats, I/O, backends, and algorithms.

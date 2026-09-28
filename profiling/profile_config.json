@@ -1,0 +1,129 @@
+{
+  "study": "gunrock-v2-eval",
+  "repository": "AGENTS.local.md: REPO_ROOT",
+  "branch": "exp-opt",
+  "comparison_reference": "AGENTS.local.md: REFERENCE_RESULTS_ROOT",
+  "result_root": "AGENTS.local.md: RESULTS_ROOT",
+  "input_root": "AGENTS.local.md: DATA_ROOT",
+  "gpu_physical": "AGENTS.local.md: GPU_VISIBLE",
+  "cuda_visible_devices": "AGENTS.local.md: GPU_VISIBLE",
+  "source_label": 0,
+  "advance_load_balance": "block_mapped",
+  "native_runs": 10,
+  "profile_repetitions_default": 1,
+  "selected_applications": ["bfs", "sssp", "bc", "pr", "tc"],
+  "selected_matrices": ["soc-orkut", "indochina-2004", "roadNet-CA", "hollywood-2009"],
+  "cases": [
+    {
+      "algorithm": "bfs",
+      "graph": "soc-orkut",
+      "source": 0,
+      "profile_repetitions": 1,
+      "validation": {"mode": "required", "reason": "v2 BFS CPU reference validator"}
+    },
+    {
+      "algorithm": "bfs",
+      "graph": "roadNet-CA",
+      "source": 0,
+      "profile_repetitions": 1,
+      "validation": {"mode": "required", "reason": "v2 BFS CPU reference validator"}
+    },
+    {
+      "algorithm": "sssp",
+      "graph": "soc-orkut",
+      "source": 0,
+      "profile_repetitions": 1,
+      "validation": {"mode": "required", "reason": "v2 SSSP CPU reference validator"}
+    },
+    {
+      "algorithm": "sssp",
+      "graph": "roadNet-CA",
+      "source": 0,
+      "profile_repetitions": 1,
+      "validation": {"mode": "required", "reason": "v2 SSSP CPU reference validator"}
+    },
+    {
+      "algorithm": "bfs",
+      "graph": "indochina-2004",
+      "source": 0,
+      "profile_repetitions": 2,
+      "validation": {"mode": "required", "reason": "v2 BFS CPU reference validator"}
+    },
+    {
+      "algorithm": "sssp",
+      "graph": "indochina-2004",
+      "source": 0,
+      "profile_repetitions": 2,
+      "validation": {"mode": "required", "reason": "v2 SSSP CPU reference validator"}
+    },
+    {
+      "algorithm": "bc",
+      "graph": "soc-orkut",
+      "source": 0,
+      "profile_repetitions": 10,
+      "validation": {"mode": "skipped", "reason": "User-requested unvalidated profiling; v2 BC has no CPU reference validator"}
+    },
+    {
+      "algorithm": "bc",
+      "graph": "indochina-2004",
+      "source": 0,
+      "profile_repetitions": 10,
+      "validation": {"mode": "skipped", "reason": "User-requested unvalidated profiling; v2 BC has no CPU reference validator"}
+    },
+    {
+      "algorithm": "bc",
+      "graph": "roadNet-CA",
+      "source": 0,
+      "profile_repetitions": 10,
+      "validation": {"mode": "skipped", "reason": "User-requested unvalidated profiling; v2 BC has no CPU reference validator"}
+    },
+    {
+      "algorithm": "pr",
+      "graph": "soc-orkut",
+      "source": 0,
+      "profile_repetitions": 10,
+      "validation": {"mode": "skipped", "reason": "User-requested unvalidated profiling; v2 PR has no CPU reference validator"}
+    },
+    {
+      "algorithm": "pr",
+      "graph": "indochina-2004",
+      "source": 0,
+      "profile_repetitions": 10,
+      "validation": {"mode": "skipped", "reason": "User-requested unvalidated profiling; v2 PR has no CPU reference validator"}
+    },
+    {
+      "algorithm": "pr",
+      "graph": "roadNet-CA",
+      "source": 0,
+      "profile_repetitions": 10,
+      "validation": {"mode": "skipped", "reason": "User-requested unvalidated profiling; v2 PR has no CPU reference validator"}
+    },
+    {
+      "algorithm": "tc",
+      "graph": "hollywood-2009",
+      "source": 0,
+      "profile_repetitions": 10,
+      "reduce_all_triangles": true,
+      "validation": {"mode": "skipped", "reason": "User-requested unvalidated profiling; TC CPU validation intentionally skipped for this batch"}
+    }
+  ],
+  "near_empty_fraction_default": 0.05,
+  "near_empty_fraction_overrides": {
+    "soc-orkut": 0.0,
+    "roadNet-CA": 0.05,
+    "indochina-2004": 0.05,
+    "hollywood-2009": 0.05
+  },
+  "ncu_modes": ["natural", "cold"],
+  "ncu_target_processes_preferred": "application-only",
+  "ncu_required_sections": [
+    "SpeedOfLight",
+    "MemoryWorkloadAnalysis",
+    "WarpStateStats",
+    "SchedulerStats",
+    "LaunchStats"
+  ],
+  "input_policy": "pass original Matrix Market files directly; do not transform, deduplicate, sort, or symmetrize",
+  "validation_policy": "required cases must report Number of errors : 0; explicitly skipped cases are recorded as validation=SKIPPED and are not presented as functionally validated",
+  "validation_skip_policy": "allowed only for the cases explicitly marked validation.mode=skipped in this manifest"
+}

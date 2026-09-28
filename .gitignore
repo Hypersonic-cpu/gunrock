@@ -53,3 +53,9 @@ externals/
 __pycache__/
 *.pyc
 *.pyo
+
+# Profiling
+profiling-results/
+
+# Machine-specific agent instructions
+AGENTS.local.md

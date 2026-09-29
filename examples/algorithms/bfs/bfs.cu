@@ -3,6 +3,8 @@
 #include <gunrock/io/parameters.hxx>
 #include <gunrock/framework/benchmark.hxx>
 
+#include <limits>
+
 #include "bfs_cpu.hxx"  // Reference implementation
 
 using namespace gunrock;
@@ -23,17 +25,22 @@ void test_bfs(int num_arguments, char** argument_array) {
   // IO
 
   gunrock::io::cli::parameters_t arguments(num_arguments, argument_array,
-                                        "Breadth First Search");
-
-  io::matrix_market_t<vertex_t, edge_t, weight_t> mm;
-  auto [properties, coo] = mm.load(arguments.filename);
+                                            "Breadth First Search");
 
   csr_t csr;
+  graph::graph_properties_t properties;
 
   if (arguments.binary) {
     csr.read_binary(arguments.filename);
   } else {
+    io::matrix_market_t<vertex_t, edge_t, weight_t> mm;
+    auto [market_properties, coo] = mm.load(arguments.filename);
+    properties = market_properties;
     csr.from_coo(coo);
+
+    if (!arguments.binary_output_filename.empty()) {
+      csr.write_binary(arguments.binary_output_filename);
+    }
   }
 
   // --
@@ -104,6 +111,22 @@ void test_bfs(int num_arguments, char** argument_array) {
   // Print info for last run
   std::cout << "Source : " << source_vect.back() << "\n";
   print::head(distances, 40, "GPU distances");
+
+  // Summarize the full BFS result. Unreachable vertices retain the maximum
+  // vertex_t value, so count and maximize only finite distances.
+  thrust::host_vector<vertex_t> h_distances = distances;
+  const vertex_t unreachable = std::numeric_limits<vertex_t>::max();
+  size_t visited_vertices = 0;
+  vertex_t max_distance = -1;
+  for (vertex_t distance : h_distances) {
+    if (distance == unreachable) continue;
+    ++visited_vertices;
+    if (distance > max_distance) max_distance = distance;
+  }
+
+  std::cout << "GPU Visited Vertices : " << visited_vertices << " / "
+            << n_vertices << "\n";
+  std::cout << "GPU Maximum Distance : " << max_distance << "\n";
   std::cout << "GPU Elapsed Time : " << run_times[n_runs - 1] << " (ms)"
             << std::endl;
 

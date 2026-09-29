@@ -1,6 +1,8 @@
 #include <cxxopts.hpp>
 #include <string>
 #include <algorithm>
+#include <cstdlib>
+#include <iostream>
 #include <gunrock/framework/operators/configs.hxx>
 #include <gunrock/algorithms/algorithms.hxx>
 
@@ -19,6 +21,7 @@ struct parameters_t {
   std::string json_dir = ".";
   std::string json_file = "";
   std::string tag_string = "";
+  std::string binary_output_filename = "";
   int num_runs = 1;
   cxxopts::Options options;
   bool export_metrics = false;
@@ -49,6 +52,10 @@ struct parameters_t {
         ("export_metrics",
          "export performance analysis metrics")  // performance evaluation
         ("m,market", "Matrix file", cxxopts::value<std::string>())  // mtx file
+        ("binary-in", "Read graph from a binary CSR file",
+         cxxopts::value<std::string>())
+        ("binary-out", "Write the CSR graph to a binary file after loading MatrixMarket input",
+         cxxopts::value<std::string>())
         ("d,json_dir", "JSON output directory",
          cxxopts::value<std::string>())  // json output directory
         ("f,json_file", "JSON output file",
@@ -89,22 +96,52 @@ struct parameters_t {
     // Parse command line arguments
     auto result = options.parse(argc, argv);
 
-    if (result.count("help") || (result.count("market") == 0)) {
+    if (result.count("help")) {
       std::cout << options.help({""}) << std::endl;
       std::exit(0);
     }
 
-    if (result.count("market") == 1) {
+    const bool has_market = result.count("market") != 0;
+    const bool has_binary_in = result.count("binary-in") != 0;
+    const bool has_binary_out = result.count("binary-out") != 0;
+    const bool is_bfs = algorithm == "Breadth First Search";
+
+    auto fail = [](const std::string& message) {
+      std::cerr << "Error: " << message << std::endl;
+      std::exit(EXIT_FAILURE);
+    };
+
+    if (has_market && has_binary_in) {
+      fail("--market and --binary-in are mutually exclusive");
+    }
+    if (has_binary_out && !has_market) {
+      fail("--binary-out requires --market MatrixMarket input");
+    }
+    if ((has_binary_in || has_binary_out) && !is_bfs) {
+      fail("--binary-in and --binary-out are currently supported only by BFS");
+    }
+    if (!has_market && !has_binary_in) {
+      std::cout << options.help({""}) << std::endl;
+      std::exit(0);
+    }
+
+    if (has_market) {
       filename = result["market"].as<std::string>();
       if (util::is_binary_csr(filename)) {
         binary = true;
       } else if (!util::is_market(filename)) {
-        std::cout << options.help({""}) << std::endl;
-        std::exit(0);
+        fail("--market must name a MatrixMarket file");
+      }
+      if (has_binary_out && binary) {
+        fail("--binary-out requires a MatrixMarket file, not binary CSR input");
       }
     } else {
-      std::cout << options.help({""}) << std::endl;
-      std::exit(0);
+      filename = result["binary-in"].as<std::string>();
+      binary = true;
+    }
+
+    if (has_binary_out) {
+      binary_output_filename = result["binary-out"].as<std::string>();
     }
 
     if (result.count("validate") == 1) {

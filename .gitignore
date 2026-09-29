@@ -19,6 +19,7 @@
 *.a
 
 # Build directories
+build
 build*/
 build_*/
 *_build/

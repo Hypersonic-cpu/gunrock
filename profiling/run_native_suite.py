@@ -72,18 +72,30 @@ class BenchmarkCase:
         graph = raw.get("graph")
         if graph not in graphs:
             raise SuiteConfigError(f"{app_name}: unsupported or missing graph {graph!r}")
-        source = raw.get("source", 0)
-        if not isinstance(source, int) or isinstance(source, bool) or source < 0:
-            raise SuiteConfigError(f"{app_name}/{graph}: source must be a non-negative integer")
-        if source >= graphs[graph].vertices:
+        sources = raw.get("source", [0])
+        if isinstance(sources, int) and not isinstance(sources, bool):
+            sources = [sources]  # Accept scalar values from older suite files.
+        if (not isinstance(sources, list) or not sources
+                or any(not isinstance(source, int) or isinstance(source, bool) or source < 0
+                       for source in sources)):
             raise SuiteConfigError(
-                f"{app_name}/{graph}: source {source} is outside the configured vertex range "
-                f"[0, {graphs[graph].vertices})"
+                f"{app_name}/{graph}: source must be a non-empty list of non-negative integers"
             )
+        if len(set(sources)) != len(sources):
+            raise SuiteConfigError(f"{app_name}/{graph}: source list contains duplicates")
+        for source in sources:
+            if source >= graphs[graph].vertices:
+                raise SuiteConfigError(
+                    f"{app_name}/{graph}: source {source} is outside the configured vertex range "
+                    f"[0, {graphs[graph].vertices})"
+                )
         reduce = raw.get("reduce_all_triangles", False)
         if not isinstance(reduce, bool):
             raise SuiteConfigError(f"{app_name}/{graph}: reduce_all_triangles must be true or false")
-        return cls(graph=graph, source=source, reduce_all_triangles=reduce)
+        return tuple(
+            cls(graph=graph, source=source, reduce_all_triangles=reduce)
+            for source in sources
+        )
 
 
 @dataclass(frozen=True)
@@ -109,7 +121,18 @@ class Application:
         raw_cases = raw.get("cases")
         if not isinstance(raw_cases, list) or not raw_cases:
             raise SuiteConfigError(f"{name}: cases must be a non-empty list")
-        cases = tuple(BenchmarkCase.from_yaml(name, case, graphs) for case in raw_cases)
+        for raw_case in raw_cases:
+            sources = raw_case.get("source", [0]) if isinstance(raw_case, dict) else None
+            if (isinstance(sources, list) and len(sources) > 1
+                    and not any("{source}" in arg for arg in args)):
+                raise SuiteConfigError(
+                    f"{name}: multiple sources require an args entry containing {{source}}"
+                )
+        cases = tuple(
+            benchmark_case
+            for raw_case in raw_cases
+            for benchmark_case in BenchmarkCase.from_yaml(name, raw_case, graphs)
+        )
         if len({(case.graph, case.source) for case in cases}) != len(cases):
             raise SuiteConfigError(f"{name}: duplicate graph/source case")
 

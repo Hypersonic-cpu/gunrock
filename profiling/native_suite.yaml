@@ -1,4 +1,5 @@
 # Full native suite. Only applications listed below are scheduled.
+# matrix_file retains the runner's schema name but contains absolute CSR binary paths.
 runs: 10
 
 supported_load_balances:
@@ -9,19 +10,19 @@ supported_load_balances:
 
 graphs:
   soc-orkut:
-    matrix_file: soc-orkut.mtx
+    matrix_file: /data-8/Graph-Datasets/bin/bfs-gen/soc-orkut.bin
     vertices: 2997166
     csr_edges: 212698418
   roadNet-CA:
-    matrix_file: roadNet-CA.mtx
+    matrix_file: /data-8/Graph-Datasets/bin/bfs-gen/roadNet-CA.bin
     vertices: 1971281
     csr_edges: 5533214
   indochina-2004:
-    matrix_file: indochina-2004.mtx
+    matrix_file: /data-8/Graph-Datasets/bin/bfs-gen/indochina-2004.bin
     vertices: 7414866
     csr_edges: 194109311
   hollywood-2009:
-    matrix_file: hollywood-2009.mtx
+    matrix_file: /data-8/Graph-Datasets/bin/bfs-gen/hollywood-2009.bin
     vertices: 1139905
     csr_edges: 115031232
 
@@ -31,13 +32,13 @@ shared:
   advance_lb_flag: &advance_lb_flag --advance_load_balance
   selected_source_cases: &selected_source_cases
     - graph: soc-orkut
-      source: 0
+      source: [0]
     - graph: roadNet-CA
-      source: 0
+      source: [0]
     - graph: indochina-2004
-      source: 0
+      source: [0]
   source_args: &source_args
-    - --market
+    - --binary-in
     - "{matrix}"
     - --src
     - "{source}"
@@ -49,7 +50,7 @@ shared:
     - --json_file
     - native.json
   pr_args: &pr_args
-    - --market
+    - --binary-in
     - "{matrix}"
     - --num_runs
     - "{runs}"
@@ -96,11 +97,11 @@ applications:
       flag: *advance_lb_flag
       policy: block_mapped
     args:
-      - --market
+      - --binary-in
       - "{matrix}"
       - --reduce
       - "{reduce}"
     cases:
       - graph: hollywood-2009
-        source: 0
+        source: [0]
         reduce_all_triangles: true

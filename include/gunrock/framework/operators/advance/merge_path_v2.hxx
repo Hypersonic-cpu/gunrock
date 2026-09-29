@@ -157,7 +157,7 @@ __global__ void merge_path_v2_kernel(graph_t G,
   );
 
   // Perf-sync, not required.
-  __syncthreads();
+  // __syncthreads();
 
   // Early exit if out-of-bound.
   if (thread_idx_start.x >= elements) {

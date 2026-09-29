@@ -1,0 +1,58 @@
+# One-run BFS profile configuration used to identify and collect middle
+# merge_path_v2 relax kernels on roadNet-CA.
+runs: 1
+binary_root: /data-8/Graph-Datasets/bin/bfs-gen
+
+gpu_metrics:
+  metric_set: ga10x-gfxt
+  frequencies_hz: [200000]
+
+supported_load_balances:
+  - thread_mapped
+  - block_mapped
+  - merge_path
+  - merge_path_v2
+
+graphs:
+  soc-orkut:
+    matrix_file: soc-orkut.mtx
+    vertices: 2997166
+    csr_edges: 212698418
+  roadNet-CA:
+    matrix_file: roadNet-CA.mtx
+    vertices: 1971281
+    csr_edges: 5533214
+  indochina-2004:
+    matrix_file: indochina-2004.mtx
+    vertices: 7414866
+    csr_edges: 194109311
+  hollywood-2009:
+    matrix_file: hollywood-2009.mtx
+    vertices: 1139905
+    csr_edges: 115031232
+
+
+shared:
+  advance_lb_flag: &advance_lb_flag --advance_load_balance
+  source_args: &source_args
+    - --binary-in
+    - "{binary}"
+    - --src
+    - "{source}"
+    - --num_runs
+    - "{runs}"
+    - --export_metrics
+    - --json_dir
+    - "{output_dir}"
+    - --json_file
+    - native.json
+
+applications:
+  bfs:
+    load_balance:
+      flag: *advance_lb_flag
+      policy: merge_path
+    args: *source_args
+    cases:
+      - graph: indochina-2004
+        source: [13331]

@@ -397,6 +397,48 @@ report and source Nsys report exist
 
 A generated `verification.json` is required beside each report.
 
+### Launch-ID-driven NCU runner
+
+`profiling/profile_suite.py --mode ncu` profiles only explicitly selected
+CUDA kernel launches. First capture an Nsight Systems trace using the same
+suite YAML and application arguments. Its `kernel-launches.csv` assigns a
+1-based `kernel_launch_id` in GPU start-time order and records each launch's
+exact mangled name plus its 0-based occurrence among launches with that exact
+name. The NCU runner maps the requested trace ID to the exact-name occurrence
+and uses `--launch-count=1` with application replay. Small setup kernels do
+not change the selected ID.
+
+```bash
+python3 profiling/profile_suite.py \
+  --mode nsys-trace \
+  --suite-config profiling/bfs_roadnet_merge_path_v2.yaml \
+  --output-dir /data-8/Profiling-Results/bfs-roadnet-mpv2-trace
+
+python3 profiling/profile_suite.py \
+  --mode ncu \
+  --suite-config profiling/bfs_roadnet_merge_path_v2.yaml \
+  --output-dir /data-8/Profiling-Results/bfs-roadnet-mpv2-ncu \
+  --only bfs/roadNet-CA \
+  --kernel-launch-table /data-8/Profiling-Results/bfs-roadnet-mpv2-trace/bfs/roadNet-CA/src-0/nsys-trace/kernel-launches.csv \
+  --kernel-launch-id 123 --kernel-launch-id 124 --kernel-launch-id 125
+```
+
+Pass launch IDs taken from the trace table after confirming their demangled
+names and grid sizes. The selected launch must have the same suite YAML,
+executable, and arguments as the application replay; the runner rejects a
+table copied from a different suite config. Each launch gets a separate
+`.ncu-rep`, raw metrics CSV, details report, and `verification.json`.
+
+The runner requests the six report sections listed above plus explicit A40
+counters for kernel duration/cycles, SM/L2/DRAM elapsed-cycle frequency, L1
+sector and L2 request hit/miss counts, L2 sectors/throughput, DRAM bytes and
+throughput, occupancy, eligible warps, and the NCU-exposed warp stall reasons.
+The `.per_second` elapsed-cycle counters report effective clock frequency in
+Hz. On the A40, device memory is GDDR DRAM; results are labeled DRAM, not HBM.
+L2 bandwidth can be derived as `lts__d_sectors.sum * 32 / duration_seconds`,
+and device-memory bandwidth as `dram__bytes.sum / duration_seconds`; the raw
+counter values and units remain in the CSV.
+
 ## 8. Counter and metric definitions
 
 Keep raw NCU values, interpreted values, units, and quality flags separate.
@@ -651,42 +693,43 @@ together under the same case directory.
 
 ## 12. Reusable scripts
 
-The reference implementation in this repository contains:
+The profiling entry points in this repository are:
 
 ```text
+profiling/profile_suite.py
 profiling/profile_one.sh
-profiling/profile_all.sh
 profiling/analyze_nsys_invocations.py
 profiling/verify_ncu_invocation.py
-profiling/validate_invocation_validation.py
-profiling/verify_profile_suite.py
 profiling/summarize_invocation_profiles.py
 profiling/summarize_architecture.py
 ```
 
-One-case flow:
+The YAML-driven suite implements `nsys-trace` and `nsys-metrics`; `ncu` is
+reserved for later implementation. For example, to capture BFS on roadNet-CA
+with device-wide GPU metrics:
 
 ```bash
-RESULTS_GROUP=validation PROFILE_MODES=natural \
-profiling/profile_one.sh <algorithm> <graph> [source]
+python3 profiling/profile_suite.py \
+  --mode nsys-metrics \
+  --suite-config profiling/profile_suite.yaml \
+  --output-dir "$RESULTS_ROOT/bfs-roadNet-metrics" \
+  --data-root "$DATA_ROOT" \
+  --build-bin "$REPO_ROOT/build/bin" \
+  --device "$GPU_VISIBLE" \
+  --only bfs/roadNet-CA
 ```
 
-Full validation and suite flow:
+The suite YAML is the source for selected applications, graphs, expected graph
+sizes, application arguments, metric set, and candidate sampling rates.
+`nsys-metrics` retains each candidate report and selects the highest rate with
+regular samples and no detected overflow warning. GPU metrics are device-wide
+and include other activity on the selected GPU. `profile_one.sh` is only the
+process/log/result-file wrapper called by `profile_suite.py`.
 
-```bash
-profiling/profile_all.sh --validate-only
-profiling/profile_all.sh
-```
-
-These are reference drivers for one application/version setup. When profiling
-another Gunrock version, provide that version's executable, input, result root,
-and application command through its application guide or manifest while
-retaining the same stages and metadata. Version-specific extraction helpers
-must not change the invocation-selection or verification rules.
-
-The scripts must not hard-code `--launch-skip 0`. They must derive every
-`--launch-skip=<index>` from the saved Nsys selection table and use
-`--launch-count=1`.
+The existing invocation-selection and NCU verification utilities remain
+available for future profiling modes. They must not hard-code
+`--launch-skip 0`; each launch index must come from the saved Nsys selection
+table and use `--launch-count=1`.
 
 ## 13. Required summaries
 

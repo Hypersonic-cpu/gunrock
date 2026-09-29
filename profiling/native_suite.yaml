@@ -1,0 +1,106 @@
+# Full native suite. Only applications listed below are scheduled.
+runs: 10
+
+supported_load_balances:
+  - thread_mapped
+  - block_mapped
+  - merge_path
+  - merge_path_v2
+
+graphs:
+  soc-orkut:
+    matrix_file: soc-orkut.mtx
+    vertices: 2997166
+    csr_edges: 212698418
+  roadNet-CA:
+    matrix_file: roadNet-CA.mtx
+    vertices: 1971281
+    csr_edges: 5533214
+  indochina-2004:
+    matrix_file: indochina-2004.mtx
+    vertices: 7414866
+    csr_edges: 194109311
+  hollywood-2009:
+    matrix_file: hollywood-2009.mtx
+    vertices: 1139905
+    csr_edges: 115031232
+
+# YAML anchors share the repeated case and argument structures below.
+shared:
+  one_process: &one_process runs_in_one_process
+  advance_lb_flag: &advance_lb_flag --advance_load_balance
+  selected_source_cases: &selected_source_cases
+    - graph: soc-orkut
+      source: 0
+    - graph: roadNet-CA
+      source: 0
+    - graph: indochina-2004
+      source: 0
+  source_args: &source_args
+    - --market
+    - "{matrix}"
+    - --src
+    - "{source}"
+    - --num_runs
+    - "{runs}"
+    - --export_metrics
+    - --json_dir
+    - "{output_dir}"
+    - --json_file
+    - native.json
+  pr_args: &pr_args
+    - --market
+    - "{matrix}"
+    - --num_runs
+    - "{runs}"
+    - --export_metrics
+    - --json_dir
+    - "{output_dir}"
+    - --json_file
+    - native.json
+
+applications:
+  bfs:
+    repeat_mode: *one_process
+    load_balance:
+      flag: *advance_lb_flag
+      policy: thread_mapped
+    args: *source_args
+    cases: *selected_source_cases
+
+  sssp:
+    repeat_mode: *one_process
+    load_balance:
+      flag: *advance_lb_flag
+      policy: merge_path_v2
+    args: *source_args
+    cases: *selected_source_cases
+
+  bc:
+    repeat_mode: *one_process
+    load_balance:
+      effective: merge_path_v2 (hard-coded in algorithm)
+    args: *source_args
+    cases: *selected_source_cases
+
+  pr:
+    repeat_mode: *one_process
+    load_balance:
+      effective: not applicable (edge parallel_for)
+    args: *pr_args
+    cases: *selected_source_cases
+
+  tc:
+    repeat_mode: fresh_processes
+    load_balance:
+      flag: *advance_lb_flag
+      policy: block_mapped
+    args:
+      - --market
+      - "{matrix}"
+      - --reduce
+      - "{reduce}"
+    cases:
+      - graph: hollywood-2009
+        source: 0
+        reduce_all_triangles: true

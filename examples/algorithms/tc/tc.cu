@@ -1,6 +1,8 @@
 #include <vector>
+#include <string>
 
 #include <gunrock/algorithms/tc.hxx>
+#include <gunrock/io/parameters.hxx>
 #include "tc_cpu.hxx"
 
 #include <cxxopts.hpp>
@@ -13,6 +15,7 @@ struct parameters_t {
   cxxopts::Options options;
   bool validate;
   bool reduce_all_triangles;
+  std::string advance_load_balance;
 
   /**
    * @brief Construct a new parameters object and parse command line arguments.
@@ -30,7 +33,10 @@ struct parameters_t {
         "r,reduce",
         "Compute a single triangle count for the entire graph (default = "
         "false)",
-        cxxopts::value<bool>()->default_value("false"));
+        cxxopts::value<bool>()->default_value("false"))(
+        "advance_load_balance",
+        "Load balancing technique for the advance operator",
+        cxxopts::value<std::string>()->default_value("block_mapped"));
 
     // Parse command line arguments
     auto result = options.parse(argc, argv);
@@ -42,6 +48,7 @@ struct parameters_t {
     filename = result["market"].as<std::string>();
     validate = result["validate"].as<bool>();
     reduce_all_triangles = result["reduce"].as<bool>();
+    advance_load_balance = result["advance_load_balance"].as<std::string>();
   }
 };
 
@@ -83,6 +90,8 @@ void test_tc(int num_arguments, char** argument_array) {
   // Build graph
 
   auto G = graph::build<memory_space_t::device>(properties, csr);
+  std::cout << "Graph vertices : " << G.get_number_of_vertices() << std::endl;
+  std::cout << "Graph CSR edges : " << G.get_number_of_edges() << std::endl;
 
   // --
   // Params and memory allocation
@@ -97,7 +106,9 @@ void test_tc(int num_arguments, char** argument_array) {
   auto context = std::make_shared<gcuda::multi_context_t>(0);
 
   // Create param and result structs
-  tc::param_t<vertex_t> param(arguments.reduce_all_triangles);
+  gunrock::options_t options(
+      gunrock::io::cli::parse_load_balance(arguments.advance_load_balance));
+  tc::param_t<vertex_t> param(arguments.reduce_all_triangles, options);
   std::size_t total_triangles = 0;
   tc::result_t<vertex_t> result(triangles_count.data().get(), &total_triangles);
 

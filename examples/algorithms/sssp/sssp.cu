@@ -23,15 +23,20 @@ void test_sssp(int num_arguments, char** argument_array) {
   gunrock::io::cli::parameters_t arguments(num_arguments, argument_array,
                                         "Single Source Shortest Path");
 
-  io::matrix_market_t<vertex_t, edge_t, weight_t> mm;
-  auto [properties, coo] = mm.load(arguments.filename);
-
   csr_t csr;
+  graph::graph_properties_t properties;
 
   if (arguments.binary) {
     csr.read_binary(arguments.filename);
   } else {
+    io::matrix_market_t<vertex_t, edge_t, weight_t> mm;
+    auto [market_properties, coo] = mm.load(arguments.filename);
+    properties = market_properties;
     csr.from_coo(coo);
+
+    if (!arguments.binary_output_filename.empty()) {
+      csr.write_binary(arguments.binary_output_filename);
+    }
   }
 
   // --

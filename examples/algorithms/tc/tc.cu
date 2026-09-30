@@ -13,6 +13,8 @@ using namespace memory;
 struct parameters_t {
   std::string filename;
   cxxopts::Options options;
+  bool binary = false;
+  std::string binary_output_filename;
   bool validate;
   bool reduce_all_triangles;
   std::string advance_load_balance;
@@ -29,7 +31,11 @@ struct parameters_t {
     options.add_options()("help", "Print help")(
         "validate", "CPU validation",
         cxxopts::value<bool>()->default_value("false"))(
-        "m,market", "Matrix file", cxxopts::value<std::string>())(
+        "m,market", "MatrixMarket file", cxxopts::value<std::string>())(
+        "binary-in", "Read graph from a binary CSR file",
+        cxxopts::value<std::string>())(
+        "binary-out", "Write CSR to a binary file after MatrixMarket input",
+        cxxopts::value<std::string>())(
         "r,reduce",
         "Compute a single triangle count for the entire graph (default = "
         "false)",
@@ -41,11 +47,47 @@ struct parameters_t {
     // Parse command line arguments
     auto result = options.parse(argc, argv);
 
-    if (result.count("help") || (result.count("market") == 0)) {
+    if (result.count("help")) {
       std::cout << options.help({""}) << std::endl;
       std::exit(0);
     }
-    filename = result["market"].as<std::string>();
+
+    const bool has_market = result.count("market") != 0;
+    const bool has_binary_in = result.count("binary-in") != 0;
+    const bool has_binary_out = result.count("binary-out") != 0;
+    auto fail = [](const std::string& message) {
+      std::cerr << "Error: " << message << std::endl;
+      std::exit(EXIT_FAILURE);
+    };
+
+    if (has_market && has_binary_in) {
+      fail("--market and --binary-in are mutually exclusive");
+    }
+    if (has_binary_out && !has_market) {
+      fail("--binary-out requires --market MatrixMarket input");
+    }
+    if (!has_market && !has_binary_in) {
+      std::cout << options.help({""}) << std::endl;
+      std::exit(0);
+    }
+
+    if (has_market) {
+      filename = result["market"].as<std::string>();
+      binary = util::is_binary_csr(filename);
+      if (!binary && !util::is_market(filename)) {
+        fail("--market must name a MatrixMarket file");
+      }
+      if (has_binary_out && binary) {
+        fail("--binary-out requires MatrixMarket input, not binary CSR input");
+      }
+    } else {
+      filename = result["binary-in"].as<std::string>();
+      binary = true;
+    }
+    if (has_binary_out) {
+      binary_output_filename = result["binary-out"].as<std::string>();
+    }
+
     validate = result["validate"].as<bool>();
     reduce_all_triangles = result["reduce"].as<bool>();
     advance_load_balance = result["advance_load_balance"].as<std::string>();
@@ -71,19 +113,20 @@ void test_tc(int num_arguments, char** argument_array) {
   gunrock::graph::graph_properties_t properties =
       gunrock::graph::graph_properties_t();
 
-  if (util::is_market(arguments.filename)) {
+  if (arguments.binary) {
+    csr.read_binary(arguments.filename);
+  } else {
     io::matrix_market_t<vertex_t, edge_t, weight_t> mm;
-    auto [properties, coo] = mm.load(arguments.filename);
+    auto [market_properties, coo] = mm.load(arguments.filename);
+    properties = market_properties;
     if (!properties.symmetric) {
       std::cerr << "Error: input matrix must be symmetric" << std::endl;
       exit(1);
     }
     csr.from_coo(coo);
-  } else if (util::is_binary_csr(arguments.filename)) {
-    csr.read_binary(arguments.filename);
-  } else {
-    std::cerr << "Unknown file format: " << arguments.filename << std::endl;
-    exit(1);
+    if (!arguments.binary_output_filename.empty()) {
+      csr.write_binary(arguments.binary_output_filename);
+    }
   }
 
   // --

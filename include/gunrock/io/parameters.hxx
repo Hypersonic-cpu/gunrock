@@ -104,7 +104,10 @@ struct parameters_t {
     const bool has_market = result.count("market") != 0;
     const bool has_binary_in = result.count("binary-in") != 0;
     const bool has_binary_out = result.count("binary-out") != 0;
-    const bool is_bfs = algorithm == "Breadth First Search";
+    const bool supports_binary_csr =
+        algorithm == "Breadth First Search" ||
+        algorithm == "Single Source Shortest Path" ||
+        algorithm == "Betweenness Centrality" || algorithm == "Page Rank";
 
     auto fail = [](const std::string& message) {
       std::cerr << "Error: " << message << std::endl;
@@ -117,8 +120,8 @@ struct parameters_t {
     if (has_binary_out && !has_market) {
       fail("--binary-out requires --market MatrixMarket input");
     }
-    if ((has_binary_in || has_binary_out) && !is_bfs) {
-      fail("--binary-in and --binary-out are currently supported only by BFS");
+    if ((has_binary_in || has_binary_out) && !supports_binary_csr) {
+      fail("--binary-in and --binary-out are not supported by this workload");
     }
     if (!has_market && !has_binary_in) {
       std::cout << options.help({""}) << std::endl;

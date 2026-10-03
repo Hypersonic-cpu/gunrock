@@ -140,7 +140,7 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
         auto in_frontier = &(this->frontiers[this->depth]);
         auto out_frontier = &(this->frontiers[this->depth + 1]);
 
-        operators::advance::execute<operators::load_balance_t::merge_path_v2,
+        operators::advance::execute<operators::load_balance_t::merge_path,
                                     operators::advance_direction_t::forward,
                                     operators::advance_io_type_t::vertices,
                                     operators::advance_io_type_t::vertices>(
@@ -178,7 +178,7 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
         auto in_frontier = &(this->frontiers[this->depth]);
         auto out_frontier = &(this->frontiers[this->depth + 1]);
 
-        operators::advance::execute<operators::load_balance_t::merge_path_v2,
+        operators::advance::execute<operators::load_balance_t::merge_path,
                                     operators::advance_direction_t::forward,
                                     operators::advance_io_type_t::vertices,
                                     operators::advance_io_type_t::none>(

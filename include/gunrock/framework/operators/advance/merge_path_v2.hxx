@@ -308,9 +308,9 @@ void execute(graph_t& G,
 
   dim3 grid(within_bounds, overflow, 1);
 
-  std::cout << "Input ";
+  // std::cout << "Input ";
   input.sort();
-  input.print();
+  // input.print();
 
   // Launch kernel.
   merge_path_v2_kernel<items_per_thread, num_threads, merge_tile_size,
@@ -320,9 +320,9 @@ void execute(graph_t& G,
 
   context.synchronize();
 
-  std::cout << "Output ";
+  // std::cout << "Output ";
   output.sort();
-  output.print();
+  // output.print();
 }
 }  // namespace merge_path_v2
 }  // namespace advance

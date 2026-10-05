@@ -5,12 +5,18 @@
 namespace gunrock::operators::advance::swpf {
 
 struct no_state_prefetch_t {
+  // Generic advance operators may consume edge weights.
+  static constexpr bool uses_edge_weights = true;
+
   template <swpf_target_t target, typename vertex_t>
   __device__ __forceinline__ void operator()(vertex_t, vertex_t) const {}
 };
 
 template <typename distance_t, bool read_source = false>
 struct distance_prefetch_t {
+  // BFS only updates destination depth; SSSP reads source distance and weight.
+  static constexpr bool uses_edge_weights = read_source;
+
   distance_t* distances;
 
   template <swpf_target_t target, typename vertex_t>
@@ -24,6 +30,8 @@ struct distance_prefetch_t {
 
 template <typename vertex_t, typename weight_t>
 struct bc_forward_prefetch_t {
+  static constexpr bool uses_edge_weights = false;
+
   vertex_t* labels;
   weight_t* sigmas;
 
@@ -38,6 +46,8 @@ struct bc_forward_prefetch_t {
 
 template <typename vertex_t, typename weight_t>
 struct bc_backward_prefetch_t {
+  static constexpr bool uses_edge_weights = false;
+
   vertex_t* labels;
   weight_t* sigmas;
   weight_t* deltas;

@@ -25,7 +25,7 @@ struct swpf_policy<swpf_algorithm_t::gp> {
       for (int i = 0; i < distance; ++i) {
         if (!next(records[i]))
           break;
-        prepare<target>(graph, records[i]);
+        prepare<target, state_prefetch_t>(graph, records[i]);
         ++count;
       }
       if (count == 0)

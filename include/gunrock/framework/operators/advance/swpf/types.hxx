@@ -16,11 +16,12 @@ struct edge_record_t {
   typename graph_t::weight_type weight;
 };
 
-template <swpf_target_t target, typename graph_t>
+template <swpf_target_t target, typename state_prefetch_t, typename graph_t>
 __device__ __forceinline__ void prepare(const graph_t& graph,
                                         const edge_record_t<graph_t>& record) {
   prefetch_read<target>(graph.get_column_indices() + record.edge);
-  prefetch_read<target>(graph.get_nonzero_values() + record.edge);
+  if constexpr (state_prefetch_t::uses_edge_weights)
+    prefetch_read<target>(graph.get_nonzero_values() + record.edge);
 }
 
 template <swpf_target_t target, typename graph_t, typename state_prefetch_t>
@@ -28,7 +29,10 @@ __device__ __forceinline__ void prefetch(const graph_t& graph,
                                          edge_record_t<graph_t>& record,
                                          state_prefetch_t state_prefetch) {
   record.destination = graph.get_destination_vertex(record.edge);
-  record.weight = graph.get_edge_weight(record.edge);
+  if constexpr (state_prefetch_t::uses_edge_weights)
+    record.weight = graph.get_edge_weight(record.edge);
+  else
+    record.weight = typename graph_t::weight_type{};
   state_prefetch.template operator()<target>(record.source, record.destination);
 }
 

@@ -21,6 +21,8 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--native-root", type=Path, required=True)
     parser.add_argument("--wait-pid", type=int)
+    parser.add_argument("--case-plan", type=Path,
+                        help="Reuse explicit configurations for comparison across revisions")
     args = parser.parse_args()
     root = args.root.resolve()
     if args.wait_pid:
@@ -40,6 +42,10 @@ def main():
     binaries = root / "no-hint-control/bin"
     binary_root = Suite.load(args.native_root / "suite-config.yaml").binary_root
     plan = cases(args.native_root, binaries, binary_root)
+    if args.case_plan:
+        plan = json.loads(args.case_plan.read_text())
+        for case in plan:
+            case["command"][0] = str(binaries / case["app"])
     validation = []
     for i, case in enumerate(plan, 1):
         folder = output / "validation" / case["app"] / case["graph"] / case["variant"]
@@ -71,7 +77,8 @@ def main():
         command = shlex.split((original_folder / "profile-command.txt").read_text())
         command[command.index("--export") + 1] = str(folder / "report")
         command = [str(binaries / app) if item.endswith("/build-v2/bin/" + app) else item for item in command]
-        run(command, folder, "profile")
+        if not (folder / "report.ncu-rep").exists():
+            run(command, folder, "profile")
         raw = folder / "raw.csv"
         with raw.open("w") as stream:
             subprocess.run([shutil.which("ncu"), "--import", str(folder / "report.ncu-rep"),

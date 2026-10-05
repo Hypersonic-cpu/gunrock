@@ -44,7 +44,8 @@ def main():
                 // after the original destination load below.
                 if (global_atom + distance < tile_row_end_offsets[thread_start.x]) {
                   swpf::prefetch_read<target>(G.get_column_indices() + e + distance);
-                  swpf::prefetch_read<target>(G.get_nonzero_values() + e + distance);
+                  if constexpr (state_prefetch_t::uses_edge_weights)
+                    swpf::prefetch_read<target>(G.get_nonzero_values() + e + distance);
                 }
               }
 """)
@@ -55,7 +56,7 @@ def main():
 
 """ + needle)
         if args.mode == "original-loop-lookahead":
-            needle = "                  swpf::prefetch_read<target>(G.get_nonzero_values() + e + distance);"
+            needle = "                    swpf::prefetch_read<target>(G.get_nonzero_values() + e + distance);"
             text = text.replace(needle, needle + """
                   // Resolve only the future address, without buffering or
                   // changing the order of current edge loads/operations.

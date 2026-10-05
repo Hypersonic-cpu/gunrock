@@ -21,6 +21,17 @@ operation at `i + 2 * distance`. Pipeline drain handles partial groups and empty
 rows. Each thread owns at most 11 merge items; large distances may have little
 opportunity to overlap work on sparse rows.
 
+Application hooks declare whether an operator uses edge weights. BFS and both
+BC phases skip weight prefetches and weight loads in GP/SPP; SSSP retains them
+because relaxation uses the weight. Original-loop hint and lookahead controls
+apply the same rule. Generic operators without an application hook retain
+weighted behavior.
+
+`profiling/validate_swpf_weight_usage.cu` is a compile-only regression for this
+policy. Its mock graph deletes both weight accessors; BFS and both BC hooks
+must compile for L1/L2 targets, while static assertions require SSSP and generic
+hooks to retain weighted behavior. Compile it with the benchmark CUDA flags.
+
 `swpf/` contains the reusable PTX wrappers, policies, and application address
 hooks. Read prefetches follow the cache target; atomic targets always use L2.
 The actual loads and atomic operations remain in the original application

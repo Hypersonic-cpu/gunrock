@@ -51,7 +51,7 @@ struct swpf_policy<swpf_algorithm_t::spp> {
       if (!exhausted) {
         edge_record_t<graph_t> record{};
         if (next(record)) {
-          prepare<target>(graph, record);
+          prepare<target, state_prefetch_t>(graph, record);
           write_slot(records, step % capacity, record);
           ++produced;
         } else {

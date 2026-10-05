@@ -149,12 +149,28 @@ def main():
     speedup_table = markdown_table(speedup_rows, ("Kernel", "仅 PF", "调度 + PF", "仅调度"))
     best_table = markdown_table(best_rows, ("Kernel", "最好实测组合", "Speedup", "Long scoreboard",
                                            "Sync", "Selected", "Issue slots used"))
+    traffic = read(root / "traffic-counters.csv")
+    bc_traffic = {r["mode"]: float(r["dram__bytes.sum"]) for r in traffic
+                  if r["app"] == "bc" and r["graph"] == "soc-orkut"
+                  and r["phase"] == "backward" and r["invocation"] == "4"}
+    bc_hint_traffic_ratio = bc_traffic["hints"] / bc_traffic["no-hints"]
+    provenance_file = root.parent / "weight-fix-provenance.json"
+    provenance_note = ""
+    if provenance_file.exists():
+        provenance = json.loads(provenance_file.read_text())
+        provenance_note = ("\n本轮修复 BFS 与 BC 的无用 weight 预取/加载，并重跑受影响的采样。"
+                           "SSSP 使用边权，算法保持不变；其性能数据从前轮复制，编译后的 kernel PTX 已核对。"
+                           "所有报告的重跑/复用来源见根目录 `weight-fix-provenance.json`。"
+                           "诊断配置沿用前轮，以比较同一 target/distance 的修复效果；"
+                           "本轮 native sweep 的最佳参数另见 `native/best-variants.csv`。\n")
     report = f"""# 软件预取、线程内部调度与硬件机会
+
+{provenance_note}
 
 ## 实验范围与四个对照
 
 - Original：正式程序 `--swpf none`，原始 Merge Path 串行边循环。
-- Prefetch only：隔离编译的 `motivation-lookahead/prefetch-only-build/bin/{{bfs,sssp,bc}}`；保留原始串行循环、线程划分、当前边的需求加载位置和操作顺序，不缓存边记录。插入本 CSR 行内 `edge + distance` 的索引/权重提示，额外读取未来目的顶点来提前发出状态提示；边界检查复用已有 shared-memory 行终点，不增加 CSR 行指针加载。
+- Prefetch only：隔离编译的 `motivation-lookahead/prefetch-only-build/bin/{{bfs,sssp,bc}}`；保留原始串行循环、线程划分、当前边的需求加载位置和操作顺序，不缓存边记录。插入本 CSR 行内 `edge + distance` 的索引提示（仅 SSSP 还提示权重），额外读取未来目的顶点来提前发出状态提示；边界检查复用已有 shared-memory 行终点，不增加 CSR 行指针加载。
 - Schedule + prefetch：正式 GP/SPP，包含实际边分组/流水线、真实 CSR 提前加载和 PTX 提示。
 - Schedule only：已有 no-hint 隔离版本，保留 GP/SPP 的实际加载提前、分组与流水线，仅去掉 PTX 提示。
 
@@ -162,7 +178,7 @@ def main():
 
 仅 PF 需要额外的未来索引加载来发现间接地址；它是明确、可复现的软件 lookahead 方案，不是能将提示和地址发现成本完全正交拆开的神奇对照。Schedule only 也包含真实软件 load-ahead，不能称为“完全没有软件预取”。上述因素相互作用，收益不能线性相加。另保留原始循环内即时状态提示的更短 lead-time 对照（prefetch_immediate），见 `all-prefetch-controls.csv`。
 
-八个定位过的热点、四个主对照，共 32 个新 NCU 报告，加上 8 个即时提示对照，共 40 个；统一 metric 集合。另补 14 个仅 PF 的 NSYS trace（7 lookahead + 7 immediate）。两个 PF 版本各有 42 个小图 + 7 个完整图 CPU-reference 验证，均通过。source=13331（大图），num_runs=1，A40/SM86，application replay，strict grid match，cache-control=none，clock-control=none；每个报告核对精确 mangled function、1-based invocation 和 grid。
+八个定位过的热点、四个主对照，共 32 个 NCU 报告，加上 8 个即时提示对照，共 40 个；统一 metric 集合。另有 14 个仅 PF 的 NSYS trace（7 lookahead + 7 immediate）。两个 PF 版本各有 42 个小图 + 7 个完整图 CPU-reference 验证，均通过。source=13331（大图），num_runs=1，A40/SM86，application replay，strict grid match，cache-control=none，clock-control=none；每个报告核对精确 mangled function、1-based invocation 和 grid。
 
 GP/SPP 参数来自先前 native sweep 的候选，保持同一热点、target 与 distance；不是独立调优后的全部软件方法最优解。仅 PF 的 `--swpf gp|spp` 在此隔离版本中只用于选择同名模板/参数，二者都执行原始串行边循环。
 
@@ -181,7 +197,7 @@ GP/SPP 参数来自先前 native sweep 的候选，保持同一热点、target �
 - `hints_on_schedule_speedup`：Schedule only / Schedule + prefetch；直接衡量在同一 GP/SPP 组织下添加提示的净收益。
 - `combined_speedup`：Original / Schedule + prefetch。
 
-`phase-performance.csv` 保存 NSYS 的所有 Merge Path kernel 时间之和（按 BC 前后向分别统计）；其中原始、GP/SPP 和 no-hint 使用前次 trace，PF 使用此次 trace，属于单次测量，不是 NCU 时间或 native 10 次中位数。
+`phase-performance.csv` 保存 NSYS 的所有 Merge Path kernel 时间之和（按 BC 前后向分别统计）；各报告的采集/复用来源以结果目录的 provenance 为准；trace 属于单次测量，不是 NCU 时间或 native 10 次中位数。
 
 ## 2. 优化后的 active warp-cycle breakdown
 
@@ -220,7 +236,7 @@ GP/SPP 必须显式维护边记录、buffer 和流水线状态；warp_instructio
 
 ### Observation 3：准确性与带宽控制比盲目增加提示更重要
 
-BC backward 的 next-level 条件让很多提前读取的 sigma/delta 最终不被使用。前次结构统计：Indochina level17 的有效 next-level 边仅 1.312%，Orkut level4 为 9.817%；前次一致 metric 的直接 DRAM 采样中，Orkut backward 提示版 / 同调度 no-hint 版产生约 4.48× DRAM bytes。此次 `dram_bytes`、`l2_sectors` 与运行时间可独立复核方向。
+BC backward 的 next-level 条件让很多提前读取的 sigma/delta 最终不被使用。结构统计：Indochina level17 的有效 next-level 边仅 1.312%，Orkut level4 为 9.817%；本轮一致 metric 的直接 DRAM 采样中，Orkut backward 提示版 / 同调度 no-hint 版产生约 {bc_hint_traffic_ratio:.2f}× DRAM bytes。`dram_bytes`、`l2_sectors` 与运行时间可独立复核方向；这里使用本轮计数器，不沿用修复前的流量比。
 
 硬件机会：先解析 labels/phase 条件，再决定是否继续追踪 sigma/delta；同 cache-line 请求合并、重复抑制、按需求流压力节流，并选择适合原子目标的 L2 路径。这里只证明当前无条件提示的浪费，不证明任何硬件能无成本预测应用语义。
 
@@ -247,7 +263,7 @@ Barrier、shared-memory/short-scoreboard 依赖、原子更新冲突、线程分
 - `positive-combinations.csv`：所有此次正收益的非 Original 组合（单次采样判断，没有显著性检验）。
 - `best-measured-combinations.csv`：8 行，每点的最好实测软件组合及残余瓶颈。
 - `residual-bottlenecks.csv`：8 行，主要状态、issue 空洞及有效 DRAM 流量速率；供区分延迟、资源与同步限制。
-- `phase-performance.csv`：NSYS phase 汇总，包含前次所有 GP/SPP 候选的对照；不是所有全程序时间。
+- `phase-performance.csv`：NSYS phase 汇总，包含所有已有 GP/SPP 候选的对照；不是所有全程序时间。
 - `best-phase-candidates.csv`：每个 app/graph/phase 的最快已有 phase 候选，避免将代表性 SPP 热点误称为全局最佳软件基线。
 - `metric-definitions.csv`：每列的 NCU metric 或公式，以及分母。
 - `four-control-speedups.pdf/png`、`active-warp-breakdown.pdf/png`：论文可导出的独立图。
@@ -256,7 +272,13 @@ Barrier、shared-memory/short-scoreboard 依赖、原子更新冲突、线程分
 """
     (output / "analysis-zh.md").write_text(report)
     extra = root / "motivation-lookahead"
-    manifest = dict(main_ncu_reports=len(rows), total_new_ncu_reports=len(read(output / "all-prefetch-controls.csv")),
+    all_controls = read(output / "all-prefetch-controls.csv")
+    copied_apps = (provenance.get("copied_apps", [])
+                   if provenance_file.exists() else [])
+    copied_reports = sum(row["app"] in copied_apps for row in all_controls)
+    manifest = dict(main_ncu_reports=len(rows), total_ncu_reports=len(all_controls),
+                    total_new_ncu_reports=len(all_controls) - copied_reports,
+                    copied_ncu_reports=copied_reports,
                     nsys_traces=len(list((output / "nsys").rglob("*.nsys-rep"))) + len(list((extra / "nsys").rglob("*.nsys-rep"))),
                     validation_cases=len(read(output / "validation-summary.csv")) + len(read(extra / "validation-summary.csv")),
                     warp_state_sum_min=min(float(r["state_sum_pct"]) for r in rows),

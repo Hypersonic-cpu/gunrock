@@ -17,10 +17,11 @@ namespace bfs {
 template <typename vertex_t>
 struct param_t {
   vertex_t single_source;
-  options_t options;  ///< Optimization options (advance load-balance, filter, uniquify)
-  
-  param_t(vertex_t _single_source, options_t _options = options_t()) 
-    : single_source(_single_source), options(_options) {}
+  options_t options;  ///< Optimization options (advance load-balance, filter,
+                      ///< uniquify)
+
+  param_t(vertex_t _single_source, options_t _options = options_t())
+      : single_source(_single_source), options(_options) {}
 };
 
 template <typename vertex_t>
@@ -59,7 +60,7 @@ struct problem_t : gunrock::problem_t<graph_t> {
   void reset() override {
     // Execution policy for a given context (using single-gpu).
     auto policy = this->context->get_context(0)->execution_policy();
-    
+
     auto n_vertices = this->get_graph().get_number_of_vertices();
     auto d_distances = thrust::device_pointer_cast(this->result.distances);
     thrust::fill(policy, d_distances + 0, d_distances + n_vertices,
@@ -127,22 +128,26 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
       return (iteration + 1 < old_distance);
     };
 
-    auto remove_invalids =
-        [] __host__ __device__(vertex_t const& vertex) -> bool {
-      // Returning true here means that we keep all the valid vertices.
-      // Internally, filter will automatically remove invalids and will never
-      // pass them to this lambda function.
-      return true;
-    };
+    auto remove_invalids = [] __host__ __device__(vertex_t const& vertex)
+        -> bool {
+          // Returning true here means that we keep all the valid vertices.
+          // Internally, filter will automatically remove invalids and will
+          // never pass them to this lambda function.
+          return true;
+        };
 
     // Execute advance operator on the provided lambda
     auto advance_load_balance = P->param.options.advance_load_balance;
-    operators::advance::execute_runtime(G, E, search, advance_load_balance, context);
+    operators::advance::execute_runtime(
+        G, E, search, advance_load_balance, context, true,
+        P->param.options.swpf,
+        operators::advance::swpf::distance_prefetch_t<vertex_t>{distances});
 
     // Execute filter operator to remove the invalids (if enabled via options).
     if (P->param.options.enable_filter) {
       auto filter_algorithm = P->param.options.filter_algorithm;
-      operators::filter::execute_runtime(G, E, remove_invalids, filter_algorithm, context);
+      operators::filter::execute_runtime(G, E, remove_invalids,
+                                         filter_algorithm, context);
     }
   }
 
@@ -176,7 +181,7 @@ float run(graph_t& G,
   problem_type problem(G, param, result, context);
   problem.init();
   problem.reset();
-  
+
   enactor_type enactor(&problem, context);
   return enactor.enact();
 }

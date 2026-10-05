@@ -1,4 +1,6 @@
 #include <gunrock/algorithms/bc.hxx>
+#include <cmath>
+#include "bc_cpu.hxx"
 #include <gunrock/util/performance.hxx>
 #include <gunrock/io/parameters.hxx>
 
@@ -17,7 +19,7 @@ void test_bc(int num_arguments, char** argument_array) {
   // IO
 
   gunrock::io::cli::parameters_t arguments(num_arguments, argument_array,
-                                        "Betweenness Centrality");
+                                           "Betweenness Centrality");
 
   format::csr_t<memory_space_t::device, vertex_t, edge_t, weight_t> csr;
   graph::graph_properties_t properties;
@@ -72,7 +74,11 @@ void test_bc(int num_arguments, char** argument_array) {
     // Synchronize before each run to ensure clean state
     // This is critical for multiple runs to prevent segfaults
     context->get_context(0)->synchronize();
-    
+
+    // The library's BC API accumulates contributions across sources. Native
+    // repeats measure independent single-source runs, so reset outside timing.
+    thrust::fill(context->get_context(0)->execution_policy(), bc_values.begin(),
+                 bc_values.end(), weight_t(0));
     benchmark::INIT_BENCH();
 
     // Create param and result structs with CLI options
@@ -85,7 +91,7 @@ void test_bc(int num_arguments, char** argument_array) {
     benchmark_metrics[i] = metrics;
 
     benchmark::DESTROY_BENCH();
-    
+
     // Synchronize after each run to ensure all operations complete
     context->get_context(0)->synchronize();
   }
@@ -103,8 +109,27 @@ void test_bc(int num_arguments, char** argument_array) {
 
   std::cout << "Single source : " << source_vect.back() << "\n";
   print::head(bc_values, 40, "GPU bc values");
-  std::cout << "GPU Elapsed Time : " << run_times[arguments.num_runs - 1]
-            << " (ms)" << std::endl;
+  std::cout << "GPU Elapsed Time : " << run_times.back() << " (ms)"
+            << std::endl;
+
+  if (arguments.validate) {
+    thrust::host_vector<weight_t> reference(n_vertices);
+    const float cpu_elapsed = bc_cpu::run<decltype(csr), vertex_t, weight_t>(
+        csr, source_vect.back(), reference.data());
+    const auto mismatch = [](weight_t a, weight_t b) {
+      return !std::isfinite(a) || !std::isfinite(b) ||
+             std::abs(a - b) >
+                 1e-4f + 1e-4f * std::max(std::abs(a), std::abs(b));
+    };
+    const auto errors = util::compare(bc_values.data().get(), reference.data(),
+                                      n_vertices, mismatch);
+    print::head(reference, 40, "CPU BC values");
+    std::cout << "CPU validation threads : " << omp_get_max_threads() << "\n";
+    std::cout << "CPU Elapsed Time : " << cpu_elapsed << " (ms)\n";
+    std::cout << "Number of errors : " << errors << std::endl;
+    if (errors != 0)
+      std::exit(EXIT_FAILURE);
+  }
 }
 
 int main(int argc, char** argv) {

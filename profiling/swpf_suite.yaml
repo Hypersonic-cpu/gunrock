@@ -1,0 +1,135 @@
+# Native software prefetch sweep: one baseline and all GP/SPP target/distance variants.
+runs: 10
+binary_root: /data-8/Graph-Datasets/bin/bfs-gen
+supported_load_balances:
+- merge_path
+swpf_variants:
+- algorithm: none
+  target: l2
+  distance: 2
+- algorithm: gp
+  target: l1
+  distance: 1
+- algorithm: gp
+  target: l1
+  distance: 2
+- algorithm: gp
+  target: l1
+  distance: 4
+- algorithm: gp
+  target: l1
+  distance: 8
+- algorithm: gp
+  target: l2
+  distance: 1
+- algorithm: gp
+  target: l2
+  distance: 2
+- algorithm: gp
+  target: l2
+  distance: 4
+- algorithm: gp
+  target: l2
+  distance: 8
+- algorithm: spp
+  target: l1
+  distance: 1
+- algorithm: spp
+  target: l1
+  distance: 2
+- algorithm: spp
+  target: l1
+  distance: 4
+- algorithm: spp
+  target: l1
+  distance: 8
+- algorithm: spp
+  target: l2
+  distance: 1
+- algorithm: spp
+  target: l2
+  distance: 2
+- algorithm: spp
+  target: l2
+  distance: 4
+- algorithm: spp
+  target: l2
+  distance: 8
+graphs:
+  roadNet-CA:
+    binary_file: roadNet-CA.bin
+    vertices: 1971281
+    csr_edges: 5533214
+  indochina-2004:
+    binary_file: indochina-2004.bin
+    vertices: 7414866
+    csr_edges: 194109311
+  soc-orkut:
+    binary_file: soc-orkut.bin
+    vertices: 2997166
+    csr_edges: 212698418
+applications:
+  bfs:
+    repeat_mode: runs_in_one_process
+    load_balance:
+      flag: --advance_load_balance
+      policy: merge_path
+    args: &id001
+    - --binary-in
+    - '{binary}'
+    - --src
+    - '{source}'
+    - --num_runs
+    - '{runs}'
+    - --swpf
+    - '{swpf}'
+    - --swpf-target
+    - '{swpf_target}'
+    - --swpf-distance
+    - '{swpf_distance}'
+    - --export_metrics
+    - --json_dir
+    - '{output_dir}'
+    - --json_file
+    - native.json
+    cases:
+    - graph: roadNet-CA
+      source:
+      - 13331
+    - graph: indochina-2004
+      source:
+      - 13331
+    - graph: soc-orkut
+      source:
+      - 13331
+  sssp:
+    repeat_mode: runs_in_one_process
+    load_balance:
+      flag: --advance_load_balance
+      policy: merge_path
+    args: *id001
+    cases:
+    - graph: roadNet-CA
+      source:
+      - 13331
+    - graph: indochina-2004
+      source:
+      - 13331
+    - graph: soc-orkut
+      source:
+      - 13331
+  bc:
+    repeat_mode: runs_in_one_process
+    load_balance:
+      effective: merge_path (hard-coded in algorithm)
+    args: *id001
+    cases:
+    - graph: roadNet-CA
+      source:
+      - 13331
+    - graph: indochina-2004
+      source:
+      - 13331
+    - graph: soc-orkut
+      source:
+      - 13331

@@ -13,7 +13,7 @@ import shutil
 import statistics
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -26,7 +26,7 @@ GRAPH_VERTICES_RE = re.compile(r"Graph vertices\s*:\s*(\d+)")
 GRAPH_EDGES_RE = re.compile(r"Graph CSR edges\s*:\s*(\d+)")
 VALID_REPEAT_MODES = {"runs_in_one_process", "fresh_processes"}
 SUMMARY_FIELDS = [
-    "benchmark", "graph", "load_balance_requested", "load_balance_effective",
+    "benchmark", "graph", "source", "swpf", "swpf_target", "swpf_distance", "load_balance_requested", "load_balance_effective",
     "vertices", "csr_edges", "samples", "gpu_median_ms", "gpu_mean_ms",
     "gpu_stddev_ms", "gpu_min_ms", "gpu_max_ms", "host_user_cpu_s",
     "host_system_cpu_s", "process_wall_s", "status", "notes",
@@ -48,7 +48,7 @@ class GraphSpec:
     def from_yaml(cls, name, raw):
         if not isinstance(name, str) or not isinstance(raw, dict):
             raise SuiteConfigError("each graph must map a name to a mapping")
-        matrix_file = raw.get("matrix_file")
+        matrix_file = raw.get("binary_file", raw.get("matrix_file"))
         vertices = raw.get("vertices")
         csr_edges = raw.get("csr_edges")
         if not isinstance(matrix_file, str) or not matrix_file:
@@ -64,6 +64,14 @@ class BenchmarkCase:
     graph: str
     source: int = 0
     reduce_all_triangles: bool = False
+    swpf: str = "none"
+    swpf_target: str = "l2"
+    swpf_distance: int = 2
+
+    def variant_name(self):
+        if self.swpf == "none":
+            return "none"
+        return f"{self.swpf}-{self.swpf_target}-d{self.swpf_distance}"
 
     @classmethod
     def from_yaml(cls, app_name, raw, graphs):
@@ -171,6 +179,8 @@ class Suite:
     supported_policies: tuple
     graphs: tuple
     applications: tuple
+    swpf_variants: tuple = ()
+    binary_root: Path = None
 
     @classmethod
     def load(cls, path):
@@ -199,7 +209,44 @@ class Suite:
             Application.from_yaml(name, app, policies, graph_specs)
             for name, app in app_map.items()
         )
-        return cls(path, runs, tuple(policies), graphs, apps)
+        variants = raw.get("swpf_variants", [])
+        if not isinstance(variants, list):
+            raise SuiteConfigError("swpf_variants must be a list")
+        normalized = []
+        for variant in variants:
+            if not isinstance(variant, dict):
+                raise SuiteConfigError("each swpf variant must be a mapping")
+            algorithm = variant.get("algorithm", "none")
+            target = variant.get("target", "l2")
+            distance = variant.get("distance", 2)
+            if algorithm not in {"none", "gp", "spp"}:
+                raise SuiteConfigError("swpf algorithm must be none, gp, or spp")
+            if (target not in {"l1", "l2"} or not isinstance(distance, int)
+                    or isinstance(distance, bool) or distance not in {1, 2, 4, 8}):
+                raise SuiteConfigError("swpf target must be l1/l2 and distance 1/2/4/8")
+            key = (algorithm, target, distance)
+            if key in normalized:
+                raise SuiteConfigError(f"duplicate swpf variant: {key}")
+            if algorithm == "none" and any(v[0] == "none" for v in normalized):
+                raise SuiteConfigError("none needs only one baseline variant")
+            normalized.append(key)
+        if normalized:
+            for app in apps:
+                if not any("{swpf}" in arg for arg in app.args):
+                    raise SuiteConfigError(f"{app.name}: swpf variants require {{swpf}} in args")
+            apps = tuple(replace(app, cases=tuple(
+                replace(case, swpf=a, swpf_target=t, swpf_distance=d)
+                for case in app.cases for a, t, d in normalized
+            )) for app in apps)
+        binary_root = raw.get("binary_root")
+        if binary_root is not None:
+            if not isinstance(binary_root, str) or not binary_root:
+                raise SuiteConfigError("binary_root must be a non-empty path")
+            binary_root = Path(binary_root).expanduser()
+            if not binary_root.is_absolute():
+                binary_root = (path.parent / binary_root).resolve()
+        return cls(path, runs, tuple(policies), graphs, apps,
+                   tuple(normalized), binary_root)
 
     def cases(self):
         return [(app, case) for app in self.applications for case in app.cases]
@@ -225,14 +272,21 @@ class NativeRunner:
         self.env.pop("GUNROCK_PROFILE_NVTX", None)
 
     def case_dir(self, app, case):
-        return self.root / "full-suite" / "gunrock-v2" / app.name / case.graph / f"src-{case.source}" / "native"
+        folder = self.root / "full-suite" / "gunrock-v2" / app.name / case.graph / f"src-{case.source}"
+        if self.suite.swpf_variants:
+            folder = folder / case.variant_name()
+        return folder / "native"
 
     def input_path(self, case):
-        return self.data_root / self.suite.graph(case.graph).matrix_file
+        return (self.suite.binary_root or self.data_root) / self.suite.graph(case.graph).matrix_file
 
     def values_for(self, app, case, folder):
         return {
             "matrix": str(self.input_path(case)),
+            "binary": str(self.input_path(case)),
+            "swpf": case.swpf,
+            "swpf_target": case.swpf_target,
+            "swpf_distance": case.swpf_distance,
             "source": case.source,
             "runs": self.suite.runs,
             "output_dir": str(folder),
@@ -274,6 +328,9 @@ class NativeRunner:
                 "application": app.name,
                 "graph": case.graph,
                 "source": case.source,
+                "swpf": case.swpf,
+                "swpf_target": case.swpf_target,
+                "swpf_distance": case.swpf_distance,
                 "runs": self.suite.runs,
                 "vertices": self.suite.graph(case.graph).vertices,
                 "csr_edges": self.suite.graph(case.graph).csr_edges,
@@ -365,6 +422,9 @@ class NativeRunner:
                 )
             native["native_campaign"] = {
                 "sample_count": len(samples),
+                "swpf": case.swpf,
+                "swpf_target": case.swpf_target,
+                "swpf_distance": case.swpf_distance,
                 "gpu_times_ms": samples,
                 "load_balance_requested": app.requested_load_balance(),
                 "load_balance_effective": app.effective_load_balance(),
@@ -372,7 +432,7 @@ class NativeRunner:
                 "host_user_cpu_s": host_user,
                 "host_system_cpu_s": host_system,
                 "process_wall_s": wall_total,
-                "process_wall_scope": f"one process: Matrix Market load, graph construction, {self.suite.runs} runs, export",
+                "process_wall_scope": f"one process: graph load, construction, {self.suite.runs} runs, export",
                 "profiling_counters_used": False,
             }
             result_file.write_text(json.dumps(native, indent=2) + "\n", encoding="utf-8")
@@ -461,6 +521,10 @@ class NativeRunner:
         row = {
             "benchmark": app.name,
             "graph": case.graph,
+            "source": case.source,
+            "swpf": case.swpf,
+            "swpf_target": case.swpf_target,
+            "swpf_distance": case.swpf_distance,
             "load_balance_requested": app.requested_load_balance(),
             "load_balance_effective": app.effective_load_balance(),
             "vertices": values.get("vertices", vertices),
@@ -496,15 +560,16 @@ class NativeRunner:
             f"Run date: {dt.datetime.now().astimezone().isoformat(timespec='seconds')}",
             f"Load-balance policies: {policies}.",
             f"Primary statistic: median of {self.suite.runs} CUDA-event algorithm timings.", "",
-            "| Benchmark | Graph matrix | Requested LB | Effective LB | V | CSR edges | N | GPU median (ms) | GPU mean ± SD (ms) | GPU min–max (ms) | Host user CPU (s) | Host system CPU (s) | Process wall (s) | Status | Notes |",
-            "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+            "| Benchmark | Graph | SWPF | Target | Distance | Requested LB | Effective LB | V | CSR edges | N | GPU median (ms) | GPU mean ± SD (ms) | GPU min–max (ms) | Host user CPU (s) | Host system CPU (s) | Process wall (s) | Status | Notes |",
+            "|---|---|---|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
         ]
         for row in self.rows:
             def number(key):
                 value = row.get(key, "")
                 return f"{float(value):.3f}" if isinstance(value, (int, float)) else str(value)
             lines.append(
-                f"| {row['benchmark']} | {row['graph']} | {row['load_balance_requested']} | "
+                f"| {row['benchmark']} | {row['graph']} | {row['swpf']} | "
+                f"{row['swpf_target']} | {row['swpf_distance']} | {row['load_balance_requested']} | "
                 f"{row['load_balance_effective']} | {row['vertices']} | {row['csr_edges']} | "
                 f"{row['samples']} | {number('gpu_median_ms')} | {number('gpu_mean_ms')} ± "
                 f"{number('gpu_stddev_ms')} | {number('gpu_min_ms')}–{number('gpu_max_ms')} | "
@@ -518,11 +583,12 @@ class NativeRunner:
             f"- Apps run in {self.suite.runs} fresh processes: {', '.join(fresh_process) or 'none'}.",
             "- Host user/system CPU time and wall time include matrix loading, graph construction/upload, algorithm calls, and output.",
             "- Built with CUDA 12.6, SM 86, Release, and ESSENTIALS_COLLECT_METRICS=OFF. Nsight and hardware counters were not used.",
-            "- No CPU reference validation was run.",
+            "- CPU validation is performed separately from native timing; see the campaign validation logs.",
         ]
         selected = {app.name for app in self.suite.applications}
         if "bc" in selected:
-            lines.insert(-1, "- BC uses hard-coded merge_path_v2.")
+            policy = next(app.effective_load_balance() for app in self.suite.applications if app.name == "bc")
+            lines.insert(-1, f"- BC effective load balance: {policy}.")
         if "pr" in selected:
             lines.insert(-1, "- PR uses edge-parallel parallel_for and has no advance load-balance setting.")
         (self.root / "native-summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -546,6 +612,12 @@ class NativeRunner:
             "load_balance_policies": {
                 app.name: app.effective_load_balance() for app in self.suite.applications
             },
+            "selected_cases": [
+                {"application": app.name, "graph": case.graph, "source": case.source,
+                 "swpf": case.swpf, "swpf_target": case.swpf_target,
+                 "swpf_distance": case.swpf_distance}
+                for app, case in self.suite.cases()
+            ],
             "runs_per_case": self.suite.runs,
             "data_root": str(self.data_root),
             "results_root": str(self.root),
@@ -560,6 +632,9 @@ class NativeRunner:
             "profiling_counters_used": False,
             "gpu_info": self.command_output([
                 "nvidia-smi", "--query-gpu=index,name,compute_cap,driver_version,memory.total", "--format=csv"
+            ]),
+            "gpu_runtime_state": self.command_output([
+                "nvidia-smi", "--query-gpu=index,temperature.gpu,clocks.sm,clocks.mem,power.draw,power.limit,utilization.gpu,memory.used", "--format=csv"
             ]),
             "nvcc_version": self.command_output([str(self.cuda_home / "bin/nvcc"), "--version"]),
         }
@@ -583,7 +658,7 @@ class NativeRunner:
         for index, (app, case) in enumerate(cases, 1):
             print(
                 f"[{index}/{len(cases)}] {app.name} x {case.graph} "
-                f"(N={self.suite.runs}, {app.repeat_mode})",
+                f"(N={self.suite.runs}, {app.repeat_mode}, {case.variant_name()})",
                 flush=True,
             )
             try:
@@ -594,6 +669,9 @@ class NativeRunner:
                 folder.mkdir(parents=True, exist_ok=True)
                 (folder / "error.txt").write_text(str(exc) + "\n", encoding="utf-8")
                 self.add_row(app, case, status="FAILED", notes=str(exc))
+        metadata["gpu_runtime_state_at_finish"] = self.command_output([
+            "nvidia-smi", "--query-gpu=index,temperature.gpu,clocks.sm,clocks.mem,power.draw,power.limit,utilization.gpu,memory.used", "--format=csv"
+        ])
         metadata["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
         metadata["successful_cases"] = sum(row["status"] == "OK" for row in self.rows)
         metadata["failed_cases"] = sum(row["status"] != "OK" for row in self.rows)

@@ -1,3 +1,4 @@
+#include <cmath>
 #include <gunrock/algorithms/sssp.hxx>
 #include "sssp_cpu.hxx"  // Reference implementation
 #include <gunrock/util/performance.hxx>
@@ -21,7 +22,7 @@ void test_sssp(int num_arguments, char** argument_array) {
   // IO
 
   gunrock::io::cli::parameters_t arguments(num_arguments, argument_array,
-                                        "Single Source Shortest Path");
+                                           "Single Source Shortest Path");
 
   csr_t csr;
   graph::graph_properties_t properties;
@@ -82,14 +83,13 @@ void test_sssp(int num_arguments, char** argument_array) {
     // Synchronize before each run to ensure clean state
     // This is critical for multiple runs to prevent segfaults
     context->get_context(0)->synchronize();
-    
+
     benchmark::INIT_BENCH();
 
     // Create param and result structs with CLI options
     gunrock::sssp::param_t<vertex_t> param(source_vect[i], options);
-    gunrock::sssp::result_t<vertex_t, weight_t> result(distances.data().get(),
-                                                       predecessors.data().get(),
-                                                       n_vertices);
+    gunrock::sssp::result_t<vertex_t, weight_t> result(
+        distances.data().get(), predecessors.data().get(), n_vertices);
 
     run_times.push_back(gunrock::sssp::run(G, param, result, context));
 
@@ -97,7 +97,7 @@ void test_sssp(int num_arguments, char** argument_array) {
     benchmark_metrics[i] = metrics;
 
     benchmark::DESTROY_BENCH();
-    
+
     // Synchronize after each run to ensure all operations complete
     context->get_context(0)->synchronize();
   }
@@ -127,13 +127,21 @@ void test_sssp(int num_arguments, char** argument_array) {
     float cpu_elapsed = sssp_cpu::run<csr_t, vertex_t, edge_t, weight_t>(
         csr, source_vect.back(), h_distances.data(), h_predecessors.data());
 
-    int n_errors =
-        util::compare(distances.data().get(), h_distances.data(), n_vertices);
+    int n_errors = util::compare(
+        distances.data().get(), h_distances.data(), n_vertices,
+        [](weight_t a, weight_t b) {
+          if (a == b)
+            return false;
+          return !std::isfinite(a) || !std::isfinite(b) ||
+                 std::abs(a - b) > 1e-5f * std::max(std::abs(a), std::abs(b));
+        });
 
     print::head(h_distances, 40, "CPU Distances");
 
     std::cout << "CPU Elapsed Time : " << cpu_elapsed << " (ms)" << std::endl;
     std::cout << "Number of errors : " << n_errors << std::endl;
+    if (n_errors != 0)
+      std::exit(EXIT_FAILURE);
   }
 }
 

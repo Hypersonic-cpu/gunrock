@@ -17,10 +17,11 @@ namespace sssp {
 template <typename vertex_t>
 struct param_t {
   vertex_t single_source;
-  options_t options;  ///< Optimization options (advance load-balance, filter, uniquify)
-  
-  param_t(vertex_t _single_source, options_t _options = options_t()) 
-    : single_source(_single_source), options(_options) {}
+  options_t options;  ///< Optimization options (advance load-balance, filter,
+                      ///< uniquify)
+
+  param_t(vertex_t _single_source, options_t _options = options_t())
+      : single_source(_single_source), options(_options) {}
 };
 
 template <typename vertex_t, typename weight_t>
@@ -143,14 +144,19 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
 
     // Execute advance operator on the provided lambda
     auto advance_load_balance = P->param.options.advance_load_balance;
-    operators::advance::execute_runtime(G, E, shortest_path, advance_load_balance, context);
+    operators::advance::execute_runtime(
+        G, E, shortest_path, advance_load_balance, context, true,
+        P->param.options.swpf,
+        operators::advance::swpf::distance_prefetch_t<weight_t, true>{
+            distances});
 
     // Execute filter operator on the provided lambda
     // SSSP uses bypass filter for visited vertices tracking
     operators::filter::execute<operators::filter_algorithm_t::bypass>(
         G, E, remove_completed_paths, context);
 
-    // Execute uniquify operator to deduplicate the frontier (if enabled via options)
+    // Execute uniquify operator to deduplicate the frontier (if enabled via
+    // options)
     if (P->param.options.enable_uniquify) {
       operators::uniquify::execute<operators::uniquify_algorithm_t::unique>(
           E, context, P->param.options.best_effort_uniquify,
@@ -167,16 +173,20 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
  * @tparam graph_t Graph type.
  * @param G Graph object.
  * @param single_source Source vertex to start the shortest path search.
- * @param distances Output array of shortest distances from source to each vertex.
- * @param predecessors Output array of predecessor vertices in the shortest path tree.
+ * @param distances Output array of shortest distances from source to each
+ * vertex.
+ * @param predecessors Output array of predecessor vertices in the shortest path
+ * tree.
  * @param context Device context.
- * @param advance_load_balance Load balancing strategy for advance operator (default: block_mapped).
+ * @param advance_load_balance Load balancing strategy for advance operator
+ * (default: block_mapped).
  * @return float Time taken to run the algorithm.
  */
 template <typename graph_t>
 float run(graph_t& G,
           param_t<typename graph_t::vertex_type>& param,
-          result_t<typename graph_t::vertex_type, typename graph_t::weight_type>& result,
+          result_t<typename graph_t::vertex_type,
+                   typename graph_t::weight_type>& result,
           std::shared_ptr<gcuda::multi_context_t> context =
               std::shared_ptr<gcuda::multi_context_t>(
                   new gcuda::multi_context_t(0))) {
@@ -192,7 +202,7 @@ float run(graph_t& G,
   problem_type problem(G, param, result, context);
   problem.init();
   problem.reset();
-  
+
   enactor_type enactor(&problem, context);
   return enactor.enact();
 }
@@ -224,7 +234,8 @@ float run(graph_t& G,
   using weight_t = typename graph_t::weight_type;
 
   param_t<vertex_t> param(single_source);
-  result_t<vertex_t, weight_t> result(distances, predecessors, G.get_number_of_vertices());
+  result_t<vertex_t, weight_t> result(distances, predecessors,
+                                      G.get_number_of_vertices());
 
   return run(G, param, result, context);
 }

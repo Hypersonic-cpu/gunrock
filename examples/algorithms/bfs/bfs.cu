@@ -25,7 +25,7 @@ void test_bfs(int num_arguments, char** argument_array) {
   // IO
 
   gunrock::io::cli::parameters_t arguments(num_arguments, argument_array,
-                                            "Breadth First Search");
+                                           "Breadth First Search");
 
   csr_t csr;
   graph::graph_properties_t properties;
@@ -81,7 +81,7 @@ void test_bfs(int num_arguments, char** argument_array) {
     // Synchronize before each run to ensure clean state
     // This is critical for multiple runs to prevent segfaults
     context->get_context(0)->synchronize();
-    
+
     benchmark::INIT_BENCH();
 
     // Create param and result structs with CLI options
@@ -95,7 +95,7 @@ void test_bfs(int num_arguments, char** argument_array) {
     benchmark_metrics[i] = metrics;
 
     benchmark::DESTROY_BENCH();
-    
+
     // Synchronize after each run to ensure all operations complete
     context->get_context(0)->synchronize();
   }
@@ -119,9 +119,11 @@ void test_bfs(int num_arguments, char** argument_array) {
   size_t visited_vertices = 0;
   vertex_t max_distance = -1;
   for (vertex_t distance : h_distances) {
-    if (distance == unreachable) continue;
+    if (distance == unreachable)
+      continue;
     ++visited_vertices;
-    if (distance > max_distance) max_distance = distance;
+    if (distance > max_distance)
+      max_distance = distance;
   }
 
   std::cout << "GPU Visited Vertices : " << visited_vertices << " / "
@@ -147,6 +149,8 @@ void test_bfs(int num_arguments, char** argument_array) {
 
     std::cout << "CPU Elapsed Time : " << cpu_elapsed << " (ms)" << std::endl;
     std::cout << "Number of errors : " << n_errors << std::endl;
+    if (n_errors != 0)
+      std::exit(EXIT_FAILURE);
   }
 }
 

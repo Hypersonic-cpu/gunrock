@@ -98,28 +98,38 @@ template <load_balance_t lb,
           typename graph_t,
           typename operator_t,
           typename frontier_t,
-          typename work_tiles_t>
+          typename work_tiles_t,
+          typename state_prefetch_t = swpf::no_state_prefetch_t>
 void execute(graph_t& G,
              operator_t op,
              frontier_t* input,
              frontier_t* output,
              work_tiles_t& segments,
-             gcuda::multi_context_t& context) {
+             gcuda::multi_context_t& context,
+             swpf_options_t swpf_options = {},
+             state_prefetch_t state_prefetch = {}) {
+  if constexpr (lb != load_balance_t::merge_path) {
+    if (swpf_options.algorithm != swpf_algorithm_t::none)
+      error::throw_if_exception(
+          hipErrorInvalidValue,
+          "Software prefetch requires merge_path advance");
+  }
   if (context.size() == 1) {
     auto context0 = context.get_context(0);
 
-    if (lb == load_balance_t::thread_mapped) {
+    if constexpr (lb == load_balance_t::thread_mapped) {
       thread_mapped::execute<direction, input_type, output_type>(
           G, op, *input, *output, segments, *context0);
 #if __HIP_PLATFORM_NVIDIA__
-    } else if (lb == load_balance_t::merge_path_v2) {
+    } else if constexpr (lb == load_balance_t::merge_path_v2) {
       merge_path_v2::execute<direction, input_type, output_type>(
           G, op, *input, *output, segments, *context0);
 #endif
-    } else if (lb == load_balance_t::merge_path) {
+    } else if constexpr (lb == load_balance_t::merge_path) {
       merge_path::execute<direction, input_type, output_type>(
-          G, op, input, output, segments, *context0);
-    } else if (lb == load_balance_t::block_mapped) {
+          G, op, input, output, segments, *context0, swpf_options,
+          state_prefetch);
+    } else if constexpr (lb == load_balance_t::block_mapped) {
       block_mapped::execute<direction, input_type, output_type>(
           G, op, *input, *output, *context0);
     } else {
@@ -199,20 +209,23 @@ template <load_balance_t lb = load_balance_t::merge_path,
           advance_io_type_t output_type = advance_io_type_t::vertices,
           typename graph_t,
           typename enactor_type,
-          typename operator_type>
+          typename operator_type,
+          typename state_prefetch_t = swpf::no_state_prefetch_t>
 void execute(graph_t& G,
              enactor_type* E,
              operator_type op,
              gcuda::multi_context_t& context,
-             bool swap_buffers = true) {
+             bool swap_buffers = true,
+             swpf_options_t swpf_options = {},
+             state_prefetch_t state_prefetch = {}) {
   execute<lb, direction, input_type, output_type>(
       G,                         // graph
       op,                        // advance operator
       E->get_input_frontier(),   // input frontier
       E->get_output_frontier(),  // output frontier
       E->scanned_work_domain,    // work segments
-      context                    // gpu context
-  );
+      context,                   // gpu context
+      swpf_options, state_prefetch);
 
   /*!
    * @note if the Enactor interface is used, we, the library writers assume
@@ -225,12 +238,12 @@ void execute(graph_t& G,
 }
 
 /**
- * @brief Runtime dispatch version of advance execute that accepts load_balance_t
- * as a runtime parameter instead of a template parameter.
- * 
+ * @brief Runtime dispatch version of advance execute that accepts
+ * load_balance_t as a runtime parameter instead of a template parameter.
+ *
  * This allows algorithms to select the load balancing strategy at runtime based
  * on command-line arguments or configuration.
- * 
+ *
  * @tparam graph_t Graph type.
  * @tparam enactor_type Enactor type.
  * @tparam operator_type Operator type (lambda function).
@@ -243,13 +256,20 @@ void execute(graph_t& G,
  */
 template <typename graph_t,
           typename enactor_type,
-          typename operator_type>
+          typename operator_type,
+          typename state_prefetch_t = swpf::no_state_prefetch_t>
 void execute_runtime(graph_t& G,
                      enactor_type* E,
                      operator_type op,
                      load_balance_t lb,
                      gcuda::multi_context_t& context,
-                     bool swap_buffers = true) {
+                     bool swap_buffers = true,
+                     swpf_options_t swpf_options = {},
+                     state_prefetch_t state_prefetch = {}) {
+  if (swpf_options.algorithm != swpf_algorithm_t::none &&
+      lb != load_balance_t::merge_path)
+    error::throw_if_exception(hipErrorInvalidValue,
+                              "Software prefetch requires merge_path advance");
   // Dispatch to appropriate template instantiation based on runtime enum value
   if (lb == load_balance_t::thread_mapped) {
     execute<load_balance_t::thread_mapped, advance_direction_t::forward,
@@ -262,7 +282,7 @@ void execute_runtime(graph_t& G,
   } else if (lb == load_balance_t::merge_path) {
     execute<load_balance_t::merge_path, advance_direction_t::forward,
             advance_io_type_t::vertices, advance_io_type_t::vertices>(
-        G, E, op, context, swap_buffers);
+        G, E, op, context, swap_buffers, swpf_options, state_prefetch);
 #if __HIP_PLATFORM_NVIDIA__
   } else if (lb == load_balance_t::merge_path_v2) {
     execute<load_balance_t::merge_path_v2, advance_direction_t::forward,
@@ -270,7 +290,8 @@ void execute_runtime(graph_t& G,
         G, E, op, context, swap_buffers);
 #endif
   } else {
-    error::throw_if_exception(hipErrorUnknown, "Load balance type not supported.");
+    error::throw_if_exception(hipErrorUnknown,
+                              "Load balance type not supported.");
   }
 }
 

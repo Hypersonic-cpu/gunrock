@@ -17,10 +17,11 @@ namespace bc {
 template <typename vertex_t>
 struct param_t {
   vertex_t single_source;
-  options_t options;  ///< Optimization options (advance load-balance, filter, uniquify)
-  
-  param_t(vertex_t _single_source, options_t _options = options_t()) 
-    : single_source(_single_source), options(_options) {}
+  options_t options;  ///< Optimization options (advance load-balance, filter,
+                      ///< uniquify)
+
+  param_t(vertex_t _single_source, options_t _options = options_t())
+      : single_source(_single_source), options(_options) {}
 };
 
 template <typename weight_t>
@@ -124,19 +125,25 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
       // Run advance
       auto forward_op = [sigmas, labels] __host__ __device__(
                             vertex_t const& src, vertex_t const& dst,
-                            edge_t const& edge,
-                            weight_t const& weight) -> bool {
-        auto new_label = labels[src] + 1;
-        auto old_label = math::atomic::cas(labels + dst, -1, new_label);
+                            edge_t const& edge, weight_t const& weight)
+          -> bool {
+            auto new_label = labels[src] + 1;
+            auto old_label = math::atomic::cas(labels + dst, -1, new_label);
 
-        if ((old_label != -1) && (new_label != old_label))
-          return false;
+            if ((old_label != -1) && (new_label != old_label))
+              return false;
 
-        math::atomic::add(sigmas + dst, sigmas[src]);
-        return old_label == -1;
-      };
+            math::atomic::add(sigmas + dst, sigmas[src]);
+            return old_label == -1;
+          };
 
       while (true) {
+        if (this->depth + 1 >= this->frontiers.size()) {
+          // Road-like graphs can exceed the initial depth capacity.
+          this->frontiers.resize(this->frontiers.size() * 2);
+          this->active_frontier = &this->frontiers[0];
+          this->inactive_frontier = &this->frontiers[1];
+        }
         auto in_frontier = &(this->frontiers[this->depth]);
         auto out_frontier = &(this->frontiers[this->depth + 1]);
 
@@ -145,7 +152,9 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
                                     operators::advance_io_type_t::vertices,
                                     operators::advance_io_type_t::vertices>(
             G, forward_op, in_frontier, out_frontier, E->scanned_work_domain,
-            context);
+            context, P->param.options.swpf,
+            operators::advance::swpf::bc_forward_prefetch_t<vertex_t, weight_t>{
+                labels, sigmas});
 
         this->depth++;
         this->search_depth++;
@@ -183,7 +192,10 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
                                     operators::advance_io_type_t::vertices,
                                     operators::advance_io_type_t::none>(
             G, backward_op, in_frontier, out_frontier, E->scanned_work_domain,
-            context);
+            context, P->param.options.swpf,
+            operators::advance::swpf::bc_backward_prefetch_t<vertex_t,
+                                                             weight_t>{
+                labels, sigmas, deltas, bc_values});
 
         this->depth--;
         this->search_depth++;
@@ -229,7 +241,8 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
  * @tparam graph_t Graph type.
  * @param G Graph object.
  * @param single_source Source vertex to start BC computation.
- * @param bc_values Output array of betweenness centrality values for each vertex.
+ * @param bc_values Output array of betweenness centrality values for each
+ * vertex.
  * @param context Device context.
  * @return float Time taken to run the algorithm.
  */
@@ -255,7 +268,8 @@ float run(graph_t& G,
 
   // Disable internal-frontiers management:
   enactor_properties_t props;
-  props.number_of_frontier_buffers = 1000;  // XXX: hack!
+  props.number_of_frontier_buffers =
+      1000;  // Grows on demand for deep BFS trees.
   props.self_manage_frontiers = true;
 
   enactor_type enactor(&problem, context, props);
@@ -297,8 +311,10 @@ float run(graph_t& G,
  *
  * @tparam graph_t Graph type.
  * @param G Graph object.
- * @param bc_values Output array of betweenness centrality values for each vertex.
- * @return float Sum of execution times for running the algorithm on all vertices.
+ * @param bc_values Output array of betweenness centrality values for each
+ * vertex.
+ * @return float Sum of execution times for running the algorithm on all
+ * vertices.
  */
 template <typename graph_t>
 float run(graph_t& G, typename graph_t::weight_type* bc_values) {

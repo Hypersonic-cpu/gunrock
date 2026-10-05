@@ -49,6 +49,16 @@ namespace operators {
  *
  * @todo somehow make that gist part of the in-code comments.
  */
+/// Software prefetch is supported only by merge_path advance.
+enum class swpf_algorithm_t { none, gp, spp };
+enum class swpf_target_t { l1, l2 };
+
+struct swpf_options_t {
+  swpf_algorithm_t algorithm = swpf_algorithm_t::none;
+  swpf_target_t target = swpf_target_t::l2;
+  int distance = 2;
+};
+
 enum load_balance_t {
   thread_mapped,  ///< 1 element per thread
   warp_mapped,    ///< (wip) Equal # of elements per warp

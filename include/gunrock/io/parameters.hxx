@@ -27,15 +27,20 @@ struct parameters_t {
   bool export_metrics = false;
   bool validate = false;
   bool binary = false;
-  
+
+  operators::swpf_options_t swpf;
+
   // Operator configuration parameters
-  operators::load_balance_t advance_load_balance = operators::load_balance_t::block_mapped;
-  operators::filter_algorithm_t filter_algorithm = operators::filter_algorithm_t::predicated;
+  operators::load_balance_t advance_load_balance =
+      operators::load_balance_t::block_mapped;
+  operators::filter_algorithm_t filter_algorithm =
+      operators::filter_algorithm_t::predicated;
   bool enable_filter = false;
-  
+
   // Uniquify operator configuration
   bool enable_uniquify = false;
-  operators::uniquify_algorithm_t uniquify_algorithm = operators::uniquify_algorithm_t::unique;
+  operators::uniquify_algorithm_t uniquify_algorithm =
+      operators::uniquify_algorithm_t::unique;
   bool best_effort_uniquify = true;
   float uniquify_percent = 100.0f;
 
@@ -53,24 +58,37 @@ struct parameters_t {
          "export performance analysis metrics")  // performance evaluation
         ("m,market", "Matrix file", cxxopts::value<std::string>())  // mtx file
         ("binary-in", "Read graph from a binary CSR file",
-         cxxopts::value<std::string>())
-        ("binary-out", "Write the CSR graph to a binary file after loading MatrixMarket input",
-         cxxopts::value<std::string>())
-        ("d,json_dir", "JSON output directory",
-         cxxopts::value<std::string>())  // json output directory
+         cxxopts::value<std::string>())("binary-out",
+                                        "Write the CSR graph to a binary file "
+                                        "after loading MatrixMarket input",
+                                        cxxopts::value<std::string>())(
+            "d,json_dir", "JSON output directory",
+            cxxopts::value<std::string>())  // json output directory
         ("f,json_file", "JSON output file",
          cxxopts::value<std::string>())  // json output file
         ("t,tag", "Tags for the JSON output; comma-separated string of tags",
          cxxopts::value<std::string>())  // tags
-        ("advance_load_balance", "Load balancing technique for advance operator (thread_mapped, block_mapped, merge_path, etc.)",
+        ("advance_load_balance",
+         "Load balancing technique for advance operator (thread_mapped, "
+         "block_mapped, merge_path, etc.)",
          cxxopts::value<std::string>())  // advance load balance
-        ("filter_algorithm", "Filter algorithm (remove, predicated, compact, bypass)",
-         cxxopts::value<std::string>())  // filter algorithm
-        ("enable_filter", "Enable filter operator")  // enable filter
+        ("advance", "Alias for --advance_load_balance",
+         cxxopts::value<std::string>())(
+            "swpf", "Software prefetch algorithm (none, gp, spp)",
+            cxxopts::value<std::string>()->default_value("none"))(
+            "swpf-target", "Software prefetch cache target (l1, l2)",
+            cxxopts::value<std::string>()->default_value("l2"))(
+            "swpf-distance", "Software prefetch lookahead (1, 2, 4, 8)",
+            cxxopts::value<std::string>()->default_value("2"))(
+            "filter_algorithm",
+            "Filter algorithm (remove, predicated, compact, bypass)",
+            cxxopts::value<std::string>())               // filter algorithm
+        ("enable_filter", "Enable filter operator")      // enable filter
         ("enable_uniquify", "Enable uniquify operator")  // enable uniquify
         ("uniquify_algorithm", "Uniquify algorithm (unique, unique_copy)",
          cxxopts::value<std::string>())  // uniquify algorithm
-        ("best_effort_uniquify", "Best-effort uniquification (skip sorting)")  // best effort
+        ("best_effort_uniquify",
+         "Best-effort uniquification (skip sorting)")  // best effort
         ("uniquify_percent", "Percentage of elements to uniquify (0-100)",
          cxxopts::value<float>());  // uniquify percent
 
@@ -84,10 +102,7 @@ struct parameters_t {
                             cxxopts::value<std::string>())  // source
           ("n,num_runs", "Number of runs (ignored if multiple sources passed)",
            cxxopts::value<int>());  // runs
-      if (algorithm == "Breadth First Search" ||
-          algorithm == "Single Source Shortest Path") {
-        options.add_options()("validate", "CPU validation");  // validate
-      }
+      options.add_options()("validate", "CPU validation");
     } else {
       options.add_options()("n,num_runs", "Number of runs",
                             cxxopts::value<int>());  // runs
@@ -174,46 +189,89 @@ struct parameters_t {
     if (result.count("json_file") == 1) {
       json_file = result["json_file"].as<std::string>();
     }
-    
+
     if (result.count("advance_load_balance") == 1) {
-      advance_load_balance = parse_load_balance(result["advance_load_balance"].as<std::string>());
+      advance_load_balance =
+          parse_load_balance(result["advance_load_balance"].as<std::string>());
     }
-    
+
+    if (result.count("advance") != 0) {
+      if (result.count("advance_load_balance") != 0)
+        fail("use either --advance or --advance_load_balance");
+      advance_load_balance =
+          parse_load_balance(result["advance"].as<std::string>());
+    }
+
+    const auto swpf_name = result["swpf"].as<std::string>();
+    if (swpf_name == "none")
+      swpf.algorithm = operators::swpf_algorithm_t::none;
+    else if (swpf_name == "gp")
+      swpf.algorithm = operators::swpf_algorithm_t::gp;
+    else if (swpf_name == "spp")
+      swpf.algorithm = operators::swpf_algorithm_t::spp;
+    else
+      fail("--swpf must be none, gp, or spp");
+
+    const auto target_name = result["swpf-target"].as<std::string>();
+    if (target_name == "l1")
+      swpf.target = operators::swpf_target_t::l1;
+    else if (target_name == "l2")
+      swpf.target = operators::swpf_target_t::l2;
+    else
+      fail("--swpf-target must be l1 or l2");
+    const auto distance_name = result["swpf-distance"].as<std::string>();
+    if (distance_name != "1" && distance_name != "2" && distance_name != "4" &&
+        distance_name != "8")
+      fail("--swpf-distance must be 1, 2, 4, or 8");
+    swpf.distance = std::stoi(distance_name);
+    if (swpf.algorithm != operators::swpf_algorithm_t::none) {
+      if (algorithm != "Breadth First Search" &&
+          algorithm != "Single Source Shortest Path" &&
+          algorithm != "Betweenness Centrality")
+        fail("software prefetch is supported only by bfs, sssp, and bc");
+      if (algorithm != "Betweenness Centrality" &&
+          advance_load_balance != operators::load_balance_t::merge_path)
+        fail("software prefetch requires --advance=merge_path");
+    }
+
     if (result.count("filter_algorithm") == 1) {
-      filter_algorithm = parse_filter_algorithm(result["filter_algorithm"].as<std::string>());
+      filter_algorithm =
+          parse_filter_algorithm(result["filter_algorithm"].as<std::string>());
     }
-    
+
     if (result.count("enable_filter") == 1) {
       enable_filter = true;
     }
-    
+
     if (result.count("enable_uniquify") == 1) {
       enable_uniquify = true;
     }
-    
+
     if (result.count("uniquify_algorithm") == 1) {
-      uniquify_algorithm = parse_uniquify_algorithm(result["uniquify_algorithm"].as<std::string>());
+      uniquify_algorithm = parse_uniquify_algorithm(
+          result["uniquify_algorithm"].as<std::string>());
     }
-    
+
     if (result.count("best_effort_uniquify") == 1) {
       best_effort_uniquify = true;
     }
-    
+
     if (result.count("uniquify_percent") == 1) {
       uniquify_percent = result["uniquify_percent"].as<float>();
     }
   }
-  
+
   /**
    * @brief Create an options_t struct from the parsed CLI arguments.
-   * 
+   *
    * This helper method converts the CLI parameters into a gunrock::options_t
    * struct that can be passed to algorithm param_t constructors.
-   * 
+   *
    * @return gunrock::options_t Options struct with CLI values.
    */
   gunrock::options_t get_options() const {
     gunrock::options_t opts;
+    opts.swpf = swpf;
     opts.advance_load_balance = advance_load_balance;
     opts.filter_algorithm = filter_algorithm;
     opts.enable_filter = enable_filter;
@@ -277,55 +335,68 @@ void parse_tag_string(std::string tag_str, std::vector<std::string>* tag_vect) {
 
 /**
  * @brief Parse load_balance_t enum from string.
- * 
+ *
  * @param str String representation (case-insensitive).
  * @return operators::load_balance_t Enum value.
  */
 operators::load_balance_t parse_load_balance(std::string str) {
   std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-  
-  if (str == "thread_mapped") return operators::load_balance_t::thread_mapped;
-  if (str == "warp_mapped") return operators::load_balance_t::warp_mapped;
-  if (str == "block_mapped") return operators::load_balance_t::block_mapped;
-  if (str == "bucketing") return operators::load_balance_t::bucketing;
-  if (str == "merge_path") return operators::load_balance_t::merge_path;
-  if (str == "merge_path_v2") return operators::load_balance_t::merge_path_v2;
-  if (str == "work_stealing") return operators::load_balance_t::work_stealing;
-  
+
+  if (str == "thread_mapped")
+    return operators::load_balance_t::thread_mapped;
+  if (str == "warp_mapped")
+    return operators::load_balance_t::warp_mapped;
+  if (str == "block_mapped")
+    return operators::load_balance_t::block_mapped;
+  if (str == "bucketing")
+    return operators::load_balance_t::bucketing;
+  if (str == "merge_path")
+    return operators::load_balance_t::merge_path;
+  if (str == "merge_path_v2")
+    return operators::load_balance_t::merge_path_v2;
+  if (str == "work_stealing")
+    return operators::load_balance_t::work_stealing;
+
   // Default to block_mapped
   return operators::load_balance_t::block_mapped;
 }
 
 /**
  * @brief Parse filter_algorithm_t enum from string.
- * 
+ *
  * @param str String representation (case-insensitive).
  * @return operators::filter_algorithm_t Enum value.
  */
 operators::filter_algorithm_t parse_filter_algorithm(std::string str) {
   std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-  
-  if (str == "remove") return operators::filter_algorithm_t::remove;
-  if (str == "predicated") return operators::filter_algorithm_t::predicated;
-  if (str == "compact") return operators::filter_algorithm_t::compact;
-  if (str == "bypass") return operators::filter_algorithm_t::bypass;
-  
+
+  if (str == "remove")
+    return operators::filter_algorithm_t::remove;
+  if (str == "predicated")
+    return operators::filter_algorithm_t::predicated;
+  if (str == "compact")
+    return operators::filter_algorithm_t::compact;
+  if (str == "bypass")
+    return operators::filter_algorithm_t::bypass;
+
   // Default to predicated
   return operators::filter_algorithm_t::predicated;
 }
 
 /**
  * @brief Parse uniquify_algorithm_t enum from string.
- * 
+ *
  * @param str String representation (case-insensitive).
  * @return operators::uniquify_algorithm_t Enum value.
  */
 operators::uniquify_algorithm_t parse_uniquify_algorithm(std::string str) {
   std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-  
-  if (str == "unique") return operators::uniquify_algorithm_t::unique;
-  if (str == "unique_copy") return operators::uniquify_algorithm_t::unique_copy;
-  
+
+  if (str == "unique")
+    return operators::uniquify_algorithm_t::unique;
+  if (str == "unique_copy")
+    return operators::uniquify_algorithm_t::unique_copy;
+
   // Default to unique
   return operators::uniquify_algorithm_t::unique;
 }
